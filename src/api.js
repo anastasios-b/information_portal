@@ -7,7 +7,7 @@ async function request(path, options = {}) {
     ...options,
     cache: 'no-store',
     headers: {
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(typeof options.body === 'string' ? { 'Content-Type': 'application/json' } : {}),
       ...(options.headers || {}),
     },
   });
@@ -71,4 +71,17 @@ export function clearPortalCache() {
   } catch {
     // Ignore cache cleanup errors.
   }
+}
+
+
+export async function uploadArticleImage(file) {
+  return request('/api/article-images', {
+    method: 'POST',
+    body: file,
+    headers: { 'Content-Type': file.type },
+  });
+}
+
+export function articleImageUrl(id) {
+  return `/api/article-images/${id}`;
 }
