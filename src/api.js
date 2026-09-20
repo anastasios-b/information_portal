@@ -4,8 +4,8 @@ const PORTAL_CACHE_TTL_MS = 5 * 60 * 1000;
 async function request(path, options = {}) {
   const response = await fetch(path, {
     credentials: 'same-origin',
-    cache: 'no-store',
     ...options,
+    cache: 'no-store',
     headers: {
       ...(options.body ? { 'Content-Type': 'application/json' } : {}),
       ...(options.headers || {}),
