@@ -279,13 +279,16 @@ function ArticlePage({ path, boot, refresh }) {
 
 function Admin({ path, boot, refresh }) {
   const isAdmin = boot.user.role === 'administrator';
-  const allowedRoutes = isAdmin ? ADMIN_ROUTES : ['/admin/articles', '/admin/categories'];
-  const effectivePath = path === '/admin' ? '/admin/articles' : path;
+  const isArticleRoute = path === '/admin/articles' || /^\/admin\/articles\/[0-9a-f-]{36}$/i.test(path);
+  const isAllowedRoute =
+    isArticleRoute ||
+    path === '/admin/categories' ||
+    (isAdmin && (path === '/admin/users' || path === '/admin/settings'));
 
   useEffect(() => {
     if (path === '/admin') navigate('/admin/articles', { replace: true });
-    else if (!allowedRoutes.includes(path)) navigate('/admin/articles', { replace: true });
-  }, [path, isAdmin]);
+    else if (!isAllowedRoute) navigate('/admin/articles', { replace: true });
+  }, [path, isAllowedRoute]);
 
   const logout = async () => {
     await api('/api/logout', { method: 'POST', body: '{}' });
@@ -293,7 +296,7 @@ function Admin({ path, boot, refresh }) {
     navigate('/');
   };
 
-  const activePath = allowedRoutes.includes(effectivePath) ? effectivePath : '/admin/articles';
+  const activePath = isArticleRoute ? '/admin/articles' : isAllowedRoute ? path : '/admin/articles';
 
   return <div className="layout">
     <aside>
@@ -312,7 +315,7 @@ function Admin({ path, boot, refresh }) {
     </aside>
 
     <main className="admin">
-      {activePath === '/admin/articles' && <Articles />}
+      {activePath === '/admin/articles' && <Articles path={path} />}
       {activePath === '/admin/categories' && <Categories />}
       {activePath === '/admin/users' && isAdmin && <Users boot={boot} refresh={refresh} />}
       {activePath === '/admin/settings' && isAdmin && <Settings boot={boot} refresh={refresh} />}
@@ -325,8 +328,9 @@ function NavButton({ path, current, children }) {
   return <button className={selected ? 'active' : ''} disabled={selected} onClick={() => navigate(path)}>{children}</button>;
 }
 
-function Articles() {
+function Articles({ path }) {
   const empty = { title: '', summary: '', content: '', status: 'draft', categoryId: '' };
+  const routeEditId = /^\/admin\/articles\/([0-9a-f-]{36})$/i.exec(path)?.[1];
   const [items, setItems] = useState([]);
   const [categories, setCategories] = useState([]);
   const [form, setForm] = useState(empty);
@@ -352,28 +356,76 @@ function Articles() {
   };
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (loading) return;
+
+    if (!routeEditId) {
+      if (id) {
+        setId(undefined);
+        setForm(empty);
+        setError('');
+      }
+      return;
+    }
+
+    const article = items.find((item) => item.id === routeEditId);
+    if (!article) {
+      setId(undefined);
+      setForm(empty);
+      setError('Article not found');
+      return;
+    }
+
+    if (id !== article.id) {
+      setId(article.id);
+      setForm({
+        title: article.title,
+        summary: article.summary,
+        content: article.content,
+        status: article.status,
+        categoryId: article.categoryId || '',
+      });
+      setError('');
+    }
+  }, [routeEditId, loading, items, id]);
+
   const categoryMap = useMemo(() => new Map(categories.map((category) => [category.id, category.name])), [categories]);
   const inlineImages = useMemo(() => extractInlineImages(form.content), [form.content]);
+  const previewCategory = categoryMap.get(form.categoryId) || 'Uncategorized';
 
   const edit = (article) => {
-    setId(article.id);
-    setForm({ title: article.title, summary: article.summary, content: article.content, status: article.status, categoryId: article.categoryId || '' });
-    setError('');
+    navigate(`/admin/articles/${article.id}`);
   };
-  const reset = () => { setId(undefined); setForm(empty); setError(''); };
+
+  const reset = () => {
+    setId(undefined);
+    setForm(empty);
+    setError('');
+    navigate('/admin/articles');
+  };
 
   const save = async (event) => {
     event.preventDefault(); setBusy(true); setError('');
     try {
-      await api(id ? `/api/articles/${id}` : '/api/articles', { method: id ? 'PUT' : 'POST', body: JSON.stringify(form) });
-      clearPortalCache(); reset(); await load();
+      const result = await api(id ? `/api/articles/${id}` : '/api/articles', {
+        method: id ? 'PUT' : 'POST',
+        body: JSON.stringify(form),
+      });
+      clearPortalCache();
+      await load();
+      if (!id) navigate(`/admin/articles/${result.article.id}`);
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
 
   const remove = async (article) => {
     if (!confirm(`Delete "${article.title}"?`)) return;
-    try { await api(`/api/articles/${article.id}`, { method: 'DELETE', body: '{}' }); clearPortalCache(); await load(); }
-    catch (err) { setError(err.message); }
+    try {
+      await api(`/api/articles/${article.id}`, { method: 'DELETE', body: '{}' });
+      clearPortalCache();
+      if (routeEditId === article.id) navigate('/admin/articles');
+      await load();
+    } catch (err) { setError(err.message); }
   };
 
   const rememberInsertionRange = () => {
@@ -521,12 +573,25 @@ function Articles() {
         {id && <button type="button" className="secondary" onClick={reset}>Cancel</button>}
       </form>
 
-      <div className="card"><h2>Existing articles</h2><div className="records" aria-busy={loading}>
+      {id ? <aside className="card article-live-preview">
+        <div className="live-preview-head">
+          <div><small>Live rendering</small><h2>Article preview</h2></div>
+          <span className="pill">{form.status}</span>
+        </div>
+        <article className="article-document preview-document">
+          <div className="article-meta"><span className="tag">{previewCategory}</span></div>
+          <h1>{form.title || 'Untitled article'}</h1>
+          {form.summary && <p className="article-summary">{form.summary}</p>}
+          <div className="article-body">
+            {form.content ? renderArticleContent(form.content) : <p className="preview-empty">Article content will appear here.</p>}
+          </div>
+        </article>
+      </aside> : <div className="card"><h2>Existing articles</h2><div className="records" aria-busy={loading}>
         {loading ? <RecordSkeleton count={4} /> : items.map((article) => <div className="record" key={article.id}>
           <div><b>{article.title}</b><small>{categoryMap.get(article.categoryId) || 'Uncategorized'} · {article.status} · {article.id}</small></div>
           <div><button className="article-edit" onClick={() => edit(article)}>Edit</button><button className="article-delete" onClick={() => remove(article)}>Delete</button></div>
         </div>)}
-      </div></div>
+      </div></div>}
     </div>
 
     {mediaOpen && <div className="media-library-overlay" onMouseDown={() => setMediaOpen(false)}>
