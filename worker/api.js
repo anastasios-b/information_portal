@@ -44,8 +44,9 @@ export async function handleApiRequest(request, env) {
     }
 
     if (parts[0] === 'article-images') {
+      if (method === 'GET' && parts.length === 1) return await listArticleImages(request, env);
       if (method === 'POST' && parts.length === 1) return await uploadArticleImage(request, env);
-      if (method === 'GET' && parts.length === 2) return await getArticleImage(request, env, parts[1]);
+      if (method === 'GET' && parts.length === 2) return await getArticleImage(request, env, decodePathComponent(parts[1]));
     }
 
     if (parts[0] === 'articles') {
@@ -156,6 +157,47 @@ async function login(request, env) {
   return json({ user: publicUser(user) }, 200, { 'Set-Cookie': sessionCookie(request, sessionToken) });
 }
 
+async function listArticleImages(request, env) {
+  await authenticate(request, env, ['administrator', 'editor']);
+  if (typeof env.PORTAL_DATA.list !== 'function') {
+    throw new ApiError(500, 'Portal media storage cannot be listed', 'STORAGE_NOT_CONFIGURED');
+  }
+
+  try {
+    const result = await env.PORTAL_DATA.list({
+      prefix: ARTICLE_IMAGE_PREFIX,
+      include: ['httpMetadata', 'customMetadata'],
+      limit: 1000,
+    });
+
+    const images = (result.objects || [])
+      .map((object) => {
+        const filename = object.key.slice(ARTICLE_IMAGE_PREFIX.length);
+        if (!filename || isUuid(filename)) return null;
+        try {
+          validateArticleImageReference(filename);
+        } catch {
+          return null;
+        }
+        return {
+          filename,
+          url: `/api/article-images/${encodeURIComponent(filename)}`,
+          size: object.size ?? null,
+          uploadedAt: object.customMetadata?.uploadedAt || object.uploaded?.toISOString?.() || null,
+          contentType: object.httpMetadata?.contentType || null,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.filename.localeCompare(b.filename));
+
+    return json({ images });
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    console.error('R2 article image list failed', error?.stack || error);
+    throw new ApiError(500, 'Article media library could not be loaded', 'IMAGE_STORAGE_FAILED');
+  }
+}
+
 async function uploadArticleImage(request, env) {
   await authenticate(request, env, ['administrator', 'editor']);
   const contentType = (request.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
@@ -163,6 +205,7 @@ async function uploadArticleImage(request, env) {
     throw new ApiError(415, 'Supported image types are JPEG, PNG, WebP, GIF and AVIF', 'INVALID_IMAGE_TYPE');
   }
 
+  const filename = validateArticleImageFilename(request.headers.get('X-Article-Image-Filename'), contentType);
   const declaredLength = Number(request.headers.get('Content-Length') || 0);
   if (declaredLength > MAX_ARTICLE_IMAGE_BYTES) {
     throw new ApiError(413, 'Article image must be at most 5 MB', 'IMAGE_TOO_LARGE');
@@ -173,28 +216,37 @@ async function uploadArticleImage(request, env) {
     throw new ApiError(413, 'Article image must be between 1 byte and 5 MB', 'IMAGE_TOO_LARGE');
   }
 
-  const id = crypto.randomUUID();
   try {
-    await env.PORTAL_DATA.put(`${ARTICLE_IMAGE_PREFIX}${id}`, body, {
+    const written = await env.PORTAL_DATA.put(`${ARTICLE_IMAGE_PREFIX}${filename}`, body, {
+      onlyIf: new Headers({ 'If-None-Match': '*' }),
       httpMetadata: { contentType },
-      customMetadata: { uploadedAt: new Date().toISOString() },
+      customMetadata: { uploadedAt: new Date().toISOString(), filename },
     });
+    if (!written) {
+      throw new ApiError(409, 'An article image with this filename already exists', 'IMAGE_FILENAME_IN_USE');
+    }
   } catch (error) {
+    if (error instanceof ApiError) throw error;
     console.error('R2 article image write failed', error?.stack || error);
     throw new ApiError(500, 'Article image could not be saved', 'IMAGE_STORAGE_FAILED');
   }
 
-  return json({ image: { id, url: `/api/article-images/${id}` } }, 201);
+  return json({
+    image: {
+      filename,
+      url: `/api/article-images/${encodeURIComponent(filename)}`,
+    },
+  }, 201);
 }
 
-async function getArticleImage(request, env, id) {
-  assertUuid(id);
+async function getArticleImage(request, env, reference) {
+  const filename = validateArticleImageReference(reference);
   const { data: settings } = await readStore(env, 'settings');
   if (settings.mode === 'private') await authenticate(request, env, ['administrator', 'editor', 'reader']);
 
   let object;
   try {
-    object = await env.PORTAL_DATA.get(`${ARTICLE_IMAGE_PREFIX}${id}`);
+    object = await env.PORTAL_DATA.get(`${ARTICLE_IMAGE_PREFIX}${filename}`);
   } catch (error) {
     console.error('R2 article image read failed', error?.stack || error);
     throw new ApiError(500, 'Article image could not be read', 'IMAGE_STORAGE_FAILED');
@@ -732,12 +784,60 @@ function validateArticle(input, categories) {
 
 function validateInlineImageTokens(content) {
   const tokenStart = '[[image:';
-  if (!content.includes(tokenStart)) return;
-  const validToken = /\[\[image:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\|(25|50|75|100)\]\]/gi;
+  if (!content.toLowerCase().includes(tokenStart)) return;
+
+  const validToken = /\[\[image:([^|\]\r\n]+)\|(25|50|75|100)\]\]/gi;
+  let match;
+  while ((match = validToken.exec(content))) validateArticleImageReference(match[1]);
+
   const remaining = content.replace(validToken, '');
   if (remaining.toLowerCase().includes(tokenStart)) {
     throw new ApiError(400, 'Article contains an invalid inline image token', 'INVALID_IMAGE_TOKEN');
   }
+}
+
+function validateArticleImageFilename(encodedFilename, contentType) {
+  if (!encodedFilename) throw new ApiError(400, 'Image filename is required', 'IMAGE_FILENAME_REQUIRED');
+
+  let filename;
+  try { filename = decodeURIComponent(encodedFilename); }
+  catch { throw new ApiError(400, 'Image filename is invalid', 'INVALID_IMAGE_FILENAME'); }
+
+  filename = validateArticleImageReference(filename);
+  if (isUuid(filename)) {
+    throw new ApiError(400, 'Image filename must include its file extension', 'INVALID_IMAGE_FILENAME');
+  }
+
+  const extension = filename.includes('.') ? filename.slice(filename.lastIndexOf('.') + 1).toLowerCase() : '';
+  const allowedExtensions = {
+    'image/jpeg': new Set(['jpg', 'jpeg']),
+    'image/png': new Set(['png']),
+    'image/webp': new Set(['webp']),
+    'image/gif': new Set(['gif']),
+    'image/avif': new Set(['avif']),
+  };
+  if (!allowedExtensions[contentType]?.has(extension)) {
+    throw new ApiError(400, 'Image filename extension does not match its file type', 'INVALID_IMAGE_FILENAME');
+  }
+
+  return filename;
+}
+
+function validateArticleImageReference(value) {
+  const reference = String(value || '').trim();
+  if (isUuid(reference)) return reference; // Legacy UUID-backed image references remain readable.
+  if (!reference || reference.length > 160 || /[\\/\0-\x1f\x7f|\[\]]/.test(reference) || reference === '.' || reference === '..') {
+    throw new ApiError(400, 'Article image filename is invalid', 'INVALID_IMAGE_FILENAME');
+  }
+  if (!/\.[A-Za-z0-9]{2,5}$/.test(reference)) {
+    throw new ApiError(400, 'Article image filename must include a file extension', 'INVALID_IMAGE_FILENAME');
+  }
+  return reference;
+}
+
+function decodePathComponent(value) {
+  try { return decodeURIComponent(value); }
+  catch { throw new ApiError(400, 'Article image filename is invalid', 'INVALID_IMAGE_FILENAME'); }
 }
 
 function assertUuid(value) {
