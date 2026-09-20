@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { api } from './api.js';
+import { api, cachedPortalApi, clearPortalCache } from './api.js';
 
 const ADMIN_ROUTES = ['/admin/articles', '/admin/categories', '/admin/users', '/admin/settings'];
 
@@ -129,10 +129,13 @@ function Home({ boot, refresh }) {
   const [articles, setArticles] = useState([]);
   const [categories, setCategories] = useState([]);
   const [open, setOpen] = useState();
+  const [query, setQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
-    Promise.all([api('/api/articles'), api('/api/categories')])
+    const load = boot.mode === 'public' ? cachedPortalApi : api;
+    Promise.all([load('/api/articles'), load('/api/categories')])
       .then(([articleData, categoryData]) => {
         setArticles(articleData.articles);
         setCategories(categoryData.categories);
@@ -142,6 +145,16 @@ function Home({ boot, refresh }) {
   }, [boot.mode, boot.user?.id]);
 
   const categoryMap = useMemo(() => new Map(categories.map((category) => [category.id, category.name])), [categories]);
+  const filteredArticles = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    return articles.filter((article) => {
+      if (categoryFilter && article.categoryId !== categoryFilter) return false;
+      if (!needle) return true;
+      const category = categoryMap.get(article.categoryId) || 'Uncategorized';
+      return [article.title, article.summary, article.content, category]
+        .some((value) => String(value || '').toLocaleLowerCase().includes(needle));
+    });
+  }, [articles, categoryFilter, categoryMap, query]);
 
   const logout = async () => {
     await api('/api/logout', { method: 'POST', body: '{}' });
@@ -165,8 +178,13 @@ function Home({ boot, refresh }) {
     <main className="main">
       <section className="hero"><small>Team knowledge</small><h1>Information that stays easy to find.</h1><p>Published procedures, references, notes and updates in one lean portal.</p></section>
       {error && <ErrorBox text={error} />}
+      <section className="portal-tools" aria-label="Filter articles">
+        <label className="search-field"><span>Search</span><input type="search" placeholder="Search articles…" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+        <label className="category-filter"><span>Category</span><select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option value="">All categories</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
+      </section>
+      <p className="results-count">{filteredArticles.length} {filteredArticles.length === 1 ? 'article' : 'articles'}</p>
       <section className="grid">
-        {articles.map((article) => <article className="card article" key={article.id}>
+        {filteredArticles.map((article) => <article className="card article" key={article.id}>
           <div>
             <div className="article-meta"><span className="tag">{categoryMap.get(article.categoryId) || 'Uncategorized'}</span><small>{new Date(article.updatedAt).toLocaleString()}</small></div>
             <h2>{article.title}</h2><p>{article.summary || article.content.slice(0, 160)}</p>
@@ -175,6 +193,7 @@ function Home({ boot, refresh }) {
         </article>)}
       </section>
       {!articles.length && !error && <div className="empty">No published articles yet.</div>}
+      {Boolean(articles.length) && !filteredArticles.length && !error && <div className="empty">No matching articles.</div>}
     </main>
 
     {open && <div className="overlay" onMouseDown={() => setOpen()}>
@@ -265,13 +284,13 @@ function Articles() {
     event.preventDefault(); setBusy(true); setError('');
     try {
       await api(id ? `/api/articles/${id}` : '/api/articles', { method: id ? 'PUT' : 'POST', body: JSON.stringify(form) });
-      reset(); await load();
+      clearPortalCache(); reset(); await load();
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
 
   const remove = async (article) => {
     if (!confirm(`Delete "${article.title}"?`)) return;
-    try { await api(`/api/articles/${article.id}`, { method: 'DELETE', body: '{}' }); await load(); }
+    try { await api(`/api/articles/${article.id}`, { method: 'DELETE', body: '{}' }); clearPortalCache(); await load(); }
     catch (err) { setError(err.message); }
   };
 
@@ -329,7 +348,7 @@ function Categories() {
     event.preventDefault(); setBusy(true); setError('');
     try {
       await api(id ? `/api/categories/${id}` : '/api/categories', { method: id ? 'PUT' : 'POST', body: JSON.stringify({ name }) });
-      reset(); await load();
+      clearPortalCache(); reset(); await load();
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
   const edit = (category) => { setId(category.id); setName(category.name); setError(''); };
@@ -337,7 +356,7 @@ function Categories() {
     if (!confirm(`Delete category "${category.name}"?`)) return;
     try {
       await api(`/api/categories/${category.id}`, { method: 'DELETE', body: '{}' });
-      if (id === category.id) reset();
+      clearPortalCache(); if (id === category.id) reset();
       await load();
     } catch (err) { setError(err.message); }
   };
@@ -438,7 +457,7 @@ function Settings({ boot, refresh }) {
     setBusy(true); setError('');
     try {
       await api('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ mode, password }) });
-      setPassword('');
+      clearPortalCache(); setPassword('');
       await refresh();
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
