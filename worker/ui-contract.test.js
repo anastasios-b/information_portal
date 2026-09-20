@@ -58,6 +58,9 @@ test('UI preserves required routes, search and controls', () => {
   assert.match(app, /\[25, 50, 75, 100\]/);
   assert.match(app, /className="inline-image-control"/);
   assert.match(app, /className="inline-article-image"/);
+  assert.match(app, /className="inline-article-image-row"/);
+  assert.match(app, /image\.width <= 50/);
+  assert.match(app, /gridColumn: `span \$\{image\.width \/ 25\}`/);
   assert.match(app, /Media library/);
   assert.match(app, /listArticleImages/);
   assert.match(app, /className="media-library-overlay"/);
