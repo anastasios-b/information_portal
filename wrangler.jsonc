@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "information-portal",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-09-20",
+  "r2_buckets": [
+    {
+      "binding": "PORTAL_DATA",
+      "bucket_name": "information-portal-data"
+    }
+  ]
+}
