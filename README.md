@@ -1,137 +1,129 @@
 # Information Portal
 
-Lean React information portal for small to medium-sized teams, deployed as one Cloudflare Worker with Static Assets and R2 storage.
+React information portal deployed as one Cloudflare Worker with Static Assets and R2 storage.
 
 ## Admin routes
 
-- `/admin` redirects to `/admin/articles`.
+- `/admin` redirects to `/admin/articles`
 - `/admin/articles`
 - `/admin/categories`
 - `/admin/users`
 - `/admin/settings`
 
-Navigation is URL-driven rather than tab-only state.
+## Portal search
 
-## Behavior
+The portal loads articles and categories once, then performs filtering entirely in the client:
 
-- Initial setup exists only while no administrator exists.
-- There is no public registration afterward.
-- Private mode requires login.
-- Public mode exposes published articles.
-- Switching public/private mode requires the logged-in administrator's current password.
-- The currently selected mode cannot be selected again.
-- Administrators manage users, categories, articles, and visibility.
-- Editors manage categories and articles.
-- Readers consume published content.
-- The last administrator cannot be deleted or demoted.
-- All persisted entity IDs are UUIDs.
-- "View portal" opens the public portal in a new tab.
+- live text search across title, summary, article body, and category name
+- category dropdown
+- combined search + category filtering
+- live result count
+- no API request on each keystroke
 
-## Categories
+When the portal is public, its first article/category load is cached in `sessionStorage` for five minutes. Private portal data is never put in that cache.
 
-Categories are UUID-backed database records. Articles store a `categoryId`.
+Normal `api()` requests always use browser `cache: "no-store"`. All admin screens use this uncached API path. Admin data is therefore fetched fresh when an admin page loads or reloads after a mutation.
 
-API:
+## R2 database layout
+
+The former monolithic JSON database has been split into four independent objects:
 
 ```text
-GET    /api/categories
-GET    /api/categories?manage=1
-POST   /api/categories
-PUT    /api/categories/:uuid
-DELETE /api/categories/:uuid
+db/users.json
+db/articles.json
+db/article-categories.json
+db/settings.json
 ```
 
-Administrators and editors may manage categories. A category cannot be deleted while an article references it.
+Each file has its own UUID root record and conditional-write ETag.
 
-## Database migration
+The API reads only the stores needed by the operation. Examples:
 
-The JSON database is stored at:
+```text
+login                         users
+bootstrap                     users + settings
+public article list           settings + articles
+public category list          settings + article-categories
+admin user CRUD               users
+article save                  users + article-categories + articles
+category save                 users + article-categories
+category delete               users + articles + article-categories
+visibility change             users + settings
+```
+
+### Legacy migration
+
+The previous object remains supported as a read-only migration source:
 
 ```text
 db/information-portal.json
 ```
 
-Schema version 2 adds:
+If one of the new split files does not exist, the Worker reads the legacy object once, extracts only that store's data, and writes the new split file. After all four stores have been touched, normal API traffic no longer needs the monolithic object.
 
-```json
-{
-  "categories": [],
-  "articles": [
-    {
-      "categoryId": "UUID"
-    }
-  ]
-}
-```
+Existing users, password hashes, articles, categories, visibility mode, UUIDs, and timestamps are retained. Legacy articles without a category remain `Uncategorized` until edited.
 
-Existing schema-v1 users and articles are preserved. Existing articles migrate with `categoryId: null` and remain readable as "Uncategorized" until edited. The migrated schema is persisted on the next database mutation.
+## Permissions
+
+- Initial setup exists only while there is no administrator.
+- No public registration is available afterward.
+- Administrators manage users, categories, articles, and visibility.
+- Editors manage categories and articles.
+- Readers consume published content.
+- The last administrator cannot be deleted or demoted.
+- Visibility changes require the logged-in administrator's current password.
+- The currently selected visibility mode cannot be selected again.
 
 ## Authentication
 
-Passwords are stored as PBKDF2-SHA-256 records with:
+Passwords use PBKDF2-SHA-256 with:
 
-- per-user random salt
+- random per-user salt
 - stored iteration count
-- derived hash
-- URL-safe Base64 encoding
+- 210,000 iterations for newly generated hashes
+- compatibility with URL-safe and standard Base64 stored hashes
 
-Verification uses the same derivation function as hashing and accepts both URL-safe Base64 and standard Base64 for compatibility with previously stored hashes.
+Changing a password rotates the user's session nonce and invalidates previous sessions.
 
-Changing a user's password rotates the session nonce and invalidates their old sessions.
+## Concurrency
 
-## Architecture
-
-- React + Vite frontend
-- Cloudflare Worker API
-- Workers Static Assets
-- Cloudflare R2 JSON storage
-- signed HttpOnly session cookie
-- R2 conditional writes for concurrent mutation safety
+Each R2 store uses conditional writes against its own ETag. Failed conditions are retried before returning a write conflict. Cloudflare R2 supports conditional `put()` through the `onlyIf` option.
 
 ## Tests
 
-`npm run build` runs regression tests before Vite compilation.
-
-The suite covers:
-
-- initial setup
-- schema migration
-- UUID storage
-- password hashing/login compatibility
-- password-confirmed visibility switching
-- category CRUD
-- article/category integrity
-- article access and management
-- administrator/editor/reader permissions
-- final-admin protection
-- password change/session invalidation
-- infrastructure errors
-- required UI routes and controls
-
-Run:
+`npm run build` executes tests before Vite compilation:
 
 ```bash
 npm test
+vite build
 ```
+
+Regression coverage includes:
+
+- password login
+- split-store creation
+- legacy monolithic migration
+- store-level API read tracing
+- public/private visibility
+- category/article integrity
+- administrator invariants
+- structured R2 failures
+- live search UI contract
+- public cache contract
+- admin no-cache contract
 
 ## Cloudflare deployment
 
-Create the bucket once:
+Create the R2 bucket once:
 
 ```bash
 npx wrangler r2 bucket create information-portal-data
 ```
 
-Set the required secret:
+Set the session secret:
 
 ```bash
 npx wrangler secret put SESSION_SECRET
-```
-
-Optional first-setup protection:
-
-```bash
-npx wrangler secret put BOOTSTRAP_TOKEN
 ```
 
 Workers Builds:
