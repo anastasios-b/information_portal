@@ -78,10 +78,13 @@ export async function uploadArticleImage(file) {
   return request('/api/article-images', {
     method: 'POST',
     body: file,
-    headers: { 'Content-Type': file.type },
+    headers: {
+      'Content-Type': file.type,
+      'X-Article-Image-Filename': encodeURIComponent(file.name),
+    },
   });
 }
 
-export function articleImageUrl(id) {
-  return `/api/article-images/${id}`;
+export function articleImageUrl(filename) {
+  return `/api/article-images/${encodeURIComponent(filename)}`;
 }
