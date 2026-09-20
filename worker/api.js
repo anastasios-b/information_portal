@@ -5,6 +5,9 @@ const STORE_KEYS = {
   categories: 'db/article-categories.json',
   settings: 'db/settings.json',
 };
+const ARTICLE_IMAGE_PREFIX = 'article-images/';
+const MAX_ARTICLE_IMAGE_BYTES = 5 * 1024 * 1024;
+const ARTICLE_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif']);
 const SESSION_COOKIE = 'portal_session';
 const SESSION_TTL_SECONDS = 12 * 60 * 60;
 const PBKDF2_ITERATIONS = 210000;
@@ -38,6 +41,11 @@ export async function handleApiRequest(request, env) {
     if (method === 'POST' && parts[0] === 'login' && parts.length === 1) return await login(request, env);
     if (method === 'POST' && parts[0] === 'logout' && parts.length === 1) {
       return json({ ok: true }, 200, { 'Set-Cookie': expiredSessionCookie(request) });
+    }
+
+    if (parts[0] === 'article-images') {
+      if (method === 'POST' && parts.length === 1) return await uploadArticleImage(request, env);
+      if (method === 'GET' && parts.length === 2) return await getArticleImage(request, env, parts[1]);
     }
 
     if (parts[0] === 'articles') {
@@ -146,6 +154,60 @@ async function login(request, env) {
   }
   const sessionToken = await createSessionToken(user, env);
   return json({ user: publicUser(user) }, 200, { 'Set-Cookie': sessionCookie(request, sessionToken) });
+}
+
+async function uploadArticleImage(request, env) {
+  await authenticate(request, env, ['administrator', 'editor']);
+  const contentType = (request.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+  if (!ARTICLE_IMAGE_TYPES.has(contentType)) {
+    throw new ApiError(415, 'Supported image types are JPEG, PNG, WebP, GIF and AVIF', 'INVALID_IMAGE_TYPE');
+  }
+
+  const declaredLength = Number(request.headers.get('Content-Length') || 0);
+  if (declaredLength > MAX_ARTICLE_IMAGE_BYTES) {
+    throw new ApiError(413, 'Article image must be at most 5 MB', 'IMAGE_TOO_LARGE');
+  }
+
+  const body = await request.arrayBuffer();
+  if (!body.byteLength || body.byteLength > MAX_ARTICLE_IMAGE_BYTES) {
+    throw new ApiError(413, 'Article image must be between 1 byte and 5 MB', 'IMAGE_TOO_LARGE');
+  }
+
+  const id = crypto.randomUUID();
+  try {
+    await env.PORTAL_DATA.put(`${ARTICLE_IMAGE_PREFIX}${id}`, body, {
+      httpMetadata: { contentType },
+      customMetadata: { uploadedAt: new Date().toISOString() },
+    });
+  } catch (error) {
+    console.error('R2 article image write failed', error?.stack || error);
+    throw new ApiError(500, 'Article image could not be saved', 'IMAGE_STORAGE_FAILED');
+  }
+
+  return json({ image: { id, url: `/api/article-images/${id}` } }, 201);
+}
+
+async function getArticleImage(request, env, id) {
+  assertUuid(id);
+  const { data: settings } = await readStore(env, 'settings');
+  if (settings.mode === 'private') await authenticate(request, env, ['administrator', 'editor', 'reader']);
+
+  let object;
+  try {
+    object = await env.PORTAL_DATA.get(`${ARTICLE_IMAGE_PREFIX}${id}`);
+  } catch (error) {
+    console.error('R2 article image read failed', error?.stack || error);
+    throw new ApiError(500, 'Article image could not be read', 'IMAGE_STORAGE_FAILED');
+  }
+  if (!object) throw new ApiError(404, 'Article image not found', 'IMAGE_NOT_FOUND');
+
+  const headers = new Headers({
+    'Content-Type': object.httpMetadata?.contentType || 'application/octet-stream',
+    'Cache-Control': settings.mode === 'public' ? 'public, max-age=3600' : 'private, no-store',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  if (object.etag) headers.set('ETag', object.etag);
+  return new Response(object.body, { status: 200, headers });
 }
 
 async function listArticles(request, env, manage) {
@@ -660,11 +722,22 @@ function validateArticle(input, categories) {
   if (!title || title.length > 200) throw new ApiError(400, 'Title is required and must be at most 200 characters', 'INVALID_TITLE');
   if (summary.length > 600) throw new ApiError(400, 'Summary must be at most 600 characters', 'INVALID_SUMMARY');
   if (!content || content.length > 1_000_000) throw new ApiError(400, 'Article content is required and must be at most 1 MB', 'INVALID_CONTENT');
+  validateInlineImageTokens(content);
   if (!ARTICLE_STATUSES.has(status)) throw new ApiError(400, 'Invalid article status', 'INVALID_ARTICLE_STATUS');
   if (!isUuid(categoryId) || !categories.some((category) => category.id === categoryId)) {
     throw new ApiError(400, 'A valid article category is required', 'INVALID_CATEGORY');
   }
   return { title, summary, content, status, categoryId };
+}
+
+function validateInlineImageTokens(content) {
+  const tokenStart = '[[image:';
+  if (!content.includes(tokenStart)) return;
+  const validToken = /\[\[image:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\|(25|50|75|100)\]\]/gi;
+  const remaining = content.replace(validToken, '');
+  if (remaining.includes(tokenStart)) {
+    throw new ApiError(400, 'Article contains an invalid inline image token', 'INVALID_IMAGE_TOKEN');
+  }
 }
 
 function assertUuid(value) {
