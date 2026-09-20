@@ -76,3 +76,6 @@
 .media-library-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.78rem}
 .skeleton-media-item{pointer-events:none}
 @media(max-width:700px){.image-source-actions{grid-template-columns:1fr}.media-library-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.media-library-item img{height:100px}}
+
+.inline-image-name{min-width:0}
+.inline-image-name b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
