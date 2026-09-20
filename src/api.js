@@ -9,12 +9,13 @@ export async function api(path, options = {}) {
   });
 
   const contentType = response.headers.get('content-type') || '';
-  const payload = contentType.includes('application/json')
+  const isJson = contentType.includes('application/json');
+  const payload = isJson
     ? await response.json()
-    : { message: await response.text() };
+    : { message: `Server request failed (HTTP ${response.status})` };
 
   if (!response.ok) {
-    const error = new Error(payload.error || payload.message || 'Request failed');
+    const error = new Error(payload.error || payload.message || `Request failed (HTTP ${response.status})`);
     error.status = response.status;
     throw error;
   }
