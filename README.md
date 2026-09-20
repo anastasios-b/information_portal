@@ -132,3 +132,31 @@ Workers Builds:
 Build command:  npm run build
 Deploy command: npx wrangler deploy
 ```
+
+
+## Inline article images
+
+Administrators and editors can upload JPEG, PNG, WebP, GIF, or AVIF images up to 5 MB while editing an article.
+
+Images are stored as separate R2 objects under:
+
+```text
+article-images/<UUID>
+```
+
+The article body keeps a lightweight inline token at the insertion position:
+
+```text
+[[image:<UUID>|50]]
+```
+
+The final value is the display width percentage. Supported widths are 25%, 50%, 75%, and 100%. Changing the width does not rewrite or duplicate the underlying image.
+
+Image API:
+
+```text
+POST /api/article-images
+GET  /api/article-images/:uuid
+```
+
+Uploads require an administrator or editor session. In private portal mode image reads require authentication; in public mode article images can be read publicly so published articles render normally.
