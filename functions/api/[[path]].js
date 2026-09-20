@@ -9,24 +9,24 @@ export async function onRequest({request,env}){
     if(!env.SESSION_SECRET||env.SESSION_SECRET.length<32) throw Error('SESSION_SECRET must be at least 32 characters');
     const u=new URL(request.url), m=request.method, p=u.pathname.replace(/^\/api\/?/,'').split('/').filter(Boolean);
     if(['POST','PUT','PATCH','DELETE'].includes(m)){const o=request.headers.get('Origin');if(o&&o!==u.origin)throw new E(403,'Cross-origin request rejected')}
-    if(m==='GET'&&p[0]==='bootstrap') return bootstrap(request,env);
-    if(m==='POST'&&p[0]==='setup') return setup(request,env);
-    if(m==='POST'&&p[0]==='login') return login(request,env);
+    if(m==='GET'&&p[0]==='bootstrap') return await bootstrap(request,env);
+    if(m==='POST'&&p[0]==='setup') return await setup(request,env);
+    if(m==='POST'&&p[0]==='login') return await login(request,env);
     if(m==='POST'&&p[0]==='logout') return out({ok:true},200,{'Set-Cookie':deadCookie(request)});
     if(p[0]==='articles'){
-      if(m==='GET'&&p.length===1)return listArticles(request,env,u.searchParams.get('manage')==='1');
-      if(m==='GET'&&p.length===2)return getArticle(request,env,p[1]);
-      if(m==='POST'&&p.length===1)return saveArticle(request,env);
-      if(m==='PUT'&&p.length===2)return saveArticle(request,env,p[1]);
-      if(m==='DELETE'&&p.length===2)return deleteArticle(request,env,p[1]);
+      if(m==='GET'&&p.length===1)return await listArticles(request,env,u.searchParams.get('manage')==='1');
+      if(m==='GET'&&p.length===2)return await getArticle(request,env,p[1]);
+      if(m==='POST'&&p.length===1)return await saveArticle(request,env);
+      if(m==='PUT'&&p.length===2)return await saveArticle(request,env,p[1]);
+      if(m==='DELETE'&&p.length===2)return await deleteArticle(request,env,p[1]);
     }
     if(p[0]==='admin'&&p[1]==='users'){
-      if(m==='GET'&&p.length===2)return listUsers(request,env);
-      if(m==='POST'&&p.length===2)return saveUser(request,env);
-      if(m==='PUT'&&p.length===3)return saveUser(request,env,p[2]);
-      if(m==='DELETE'&&p.length===3)return deleteUser(request,env,p[2]);
+      if(m==='GET'&&p.length===2)return await listUsers(request,env);
+      if(m==='POST'&&p.length===2)return await saveUser(request,env);
+      if(m==='PUT'&&p.length===3)return await saveUser(request,env,p[2]);
+      if(m==='DELETE'&&p.length===3)return await deleteUser(request,env,p[2]);
     }
-    if(m==='PATCH'&&p[0]==='admin'&&p[1]==='settings')return settings(request,env);
+    if(m==='PATCH'&&p[0]==='admin'&&p[1]==='settings')return await settings(request,env);
     throw new E(404,'Endpoint not found');
   }catch(e){console.error(e);return out({error:e instanceof E?e.message:'Internal server error'},e instanceof E?e.status:500)}
 }
