@@ -80,7 +80,7 @@ Passwords use PBKDF2-SHA-256 with:
 
 - random per-user salt
 - stored iteration count
-- 210,000 iterations for newly generated hashes
+- 60,000 iterations for newly generated hashes
 - compatibility with URL-safe and standard Base64 stored hashes
 
 Changing a password rotates the user's session nonce and invalidates previous sessions.
