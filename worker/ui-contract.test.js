@@ -48,6 +48,11 @@ test('UI preserves required routes, search and controls', () => {
   assert.match(app, /className="article-read"/);
   assert.match(app, /className="article-edit"/);
   assert.match(app, /className="article-delete"/);
+  assert.match(app, /<Articles path=\{path\} \/>/);
+  assert.match(app, /\/admin\/articles\/\$\{article\.id\}/);
+  assert.match(app, /Live rendering/);
+  assert.match(app, /Article preview/);
+  assert.match(app, /renderArticleContent\(form\.content\)/);
   assert.doesNotMatch(app, /className="modal"/);
 
   assert.match(app, /Add inline image/);
