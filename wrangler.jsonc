@@ -16,9 +16,8 @@
       "bucket_name": "information-portal-data"
     }
   ],
-  "secrets": {
-    "required": [
-      "SESSION_SECRET"
-    ]
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
   }
 }
