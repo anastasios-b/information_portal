@@ -573,7 +573,7 @@ function Articles({ path }) {
         {id && <button type="button" className="secondary" onClick={reset}>Cancel</button>}
       </form>
 
-      {id ? <aside className="card article-live-preview">
+      {id ? <div className="card article-live-preview">
         <div className="live-preview-head">
           <div><small>Live rendering</small><h2>Article preview</h2></div>
           <span className="pill">{form.status}</span>
@@ -586,7 +586,7 @@ function Articles({ path }) {
             {form.content ? renderArticleContent(form.content) : <p className="preview-empty">Article content will appear here.</p>}
           </div>
         </article>
-      </aside> : <div className="card"><h2>Existing articles</h2><div className="records" aria-busy={loading}>
+      </div> : <div className="card"><h2>Existing articles</h2><div className="records" aria-busy={loading}>
         {loading ? <RecordSkeleton count={4} /> : items.map((article) => <div className="record" key={article.id}>
           <div><b>{article.title}</b><small>{categoryMap.get(article.categoryId) || 'Uncategorized'} · {article.status} · {article.id}</small></div>
           <div><button className="article-edit" onClick={() => edit(article)}>Edit</button><button className="article-delete" onClick={() => remove(article)}>Delete</button></div>
