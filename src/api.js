@@ -88,3 +88,8 @@ export async function uploadArticleImage(file) {
 export function articleImageUrl(filename) {
   return `/api/article-images/${encodeURIComponent(filename)}`;
 }
+
+
+export function listArticleImages() {
+  return request('/api/article-images', { method: 'GET' });
+}
