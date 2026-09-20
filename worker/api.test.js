@@ -15,7 +15,13 @@ const KEYS = {
 };
 
 class MockR2Object {
-  constructor(entry) { this.entry = entry; this.etag = entry.etag; }
+  constructor(entry) {
+    this.entry = entry;
+    this.etag = entry.etag;
+    this.httpMetadata = entry.httpMetadata;
+    this.customMetadata = entry.customMetadata;
+    this.body = entry.value instanceof ArrayBuffer ? entry.value : new TextEncoder().encode(String(entry.value));
+  }
   async json() { return JSON.parse(this.entry.value); }
 }
 class MockR2 {
@@ -35,10 +41,18 @@ class MockR2 {
     } else if (condition?.etagMatches && current?.etag !== condition.etagMatches) return null;
     else if (condition?.etagMatches && !current) return null;
     const etag = `etag-${++this.version}`;
-    this.items.set(key, { value: String(value), etag });
+    this.items.set(key, {
+      value: typeof value === 'string' ? value : value,
+      etag,
+      httpMetadata: options.httpMetadata,
+      customMetadata: options.customMetadata,
+    });
     return { etag };
   }
-  data(key) { const entry = this.items.get(key); return entry ? JSON.parse(entry.value) : null; }
+  data(key) {
+    const entry = this.items.get(key);
+    return entry && typeof entry.value === 'string' ? JSON.parse(entry.value) : null;
+  }
   seed(key, value) { this.items.set(key, { value: JSON.stringify(value), etag: `etag-${++this.version}` }); }
   resetTrace() { this.reads = []; this.writes = []; }
 }
@@ -54,6 +68,19 @@ async function call(environment, path, { method = 'GET', body, cookie } = {}) {
   }), environment);
   return { response, payload: response.status === 204 ? null : await response.json() };
 }
+async function rawCall(environment, path, { method = 'GET', body, cookie, contentType } = {}) {
+  const headers = new Headers();
+  if (contentType) headers.set('Content-Type', contentType);
+  if (method !== 'GET') headers.set('Origin', ORIGIN);
+  if (cookie) headers.set('Cookie', cookie);
+  const response = await handleApiRequest(new Request(`${ORIGIN}${path}`, { method, headers, body }), environment);
+  const type = response.headers.get('content-type') || '';
+  return {
+    response,
+    payload: type.includes('application/json') ? await response.json() : await response.arrayBuffer(),
+  };
+}
+
 function cookieFrom(response) { return response.headers.get('set-cookie')?.split(';')[0] || ''; }
 async function setupAdmin(environment) {
   const result = await call(environment, '/api/setup', { method: 'POST', body: { email: 'admin@example.com', password: ADMIN_PASSWORD } });
@@ -185,6 +212,75 @@ test('last administrator invariant remains enforced in users store', async () =>
   assert.equal(result.response.status, 409);
   result = await call(e, `/api/admin/users/${id}`, { method: 'PUT', cookie: admin.cookie, body: { email: 'admin@example.com', role: 'reader' } });
   assert.equal(result.response.status, 409);
+});
+
+
+test('inline article images upload to R2 and respect portal privacy', async () => {
+  const e = env();
+  const admin = await setupAdmin(e);
+  const category = await createCategory(e, admin.cookie);
+  const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+
+  let result = await rawCall(e, '/api/article-images', {
+    method: 'POST',
+    cookie: admin.cookie,
+    contentType: 'image/png',
+    body: bytes,
+  });
+  assert.equal(result.response.status, 201);
+  assert.match(result.payload.image.id, UUID_RE);
+  const imageId = result.payload.image.id;
+  const imageKey = `article-images/${imageId}`;
+  assert.ok(e.PORTAL_DATA.items.has(imageKey));
+
+  result = await call(e, '/api/articles', {
+    method: 'POST',
+    cookie: admin.cookie,
+    body: {
+      title: 'With image',
+      summary: '',
+      content: `Before\n[[image:${imageId}|50]]\nAfter`,
+      status: 'published',
+      categoryId: category.id,
+    },
+  });
+  assert.equal(result.response.status, 201);
+
+  result = await rawCall(e, `/api/article-images/${imageId}`, { cookie: admin.cookie });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.response.headers.get('content-type'), 'image/png');
+  assert.deepEqual([...new Uint8Array(result.payload)], [...bytes]);
+
+  result = await rawCall(e, `/api/article-images/${imageId}`);
+  assert.equal(result.response.status, 401);
+
+  await call(e, '/api/admin/settings', {
+    method: 'PATCH',
+    cookie: admin.cookie,
+    body: { mode: 'public', password: ADMIN_PASSWORD },
+  });
+  result = await rawCall(e, `/api/article-images/${imageId}`);
+  assert.equal(result.response.status, 200);
+});
+
+test('invalid inline image tokens are rejected', async () => {
+  const e = env();
+  const admin = await setupAdmin(e);
+  const category = await createCategory(e, admin.cookie);
+
+  const result = await call(e, '/api/articles', {
+    method: 'POST',
+    cookie: admin.cookie,
+    body: {
+      title: 'Bad image token',
+      summary: '',
+      content: 'Text [[image:not-a-uuid|42]]',
+      status: 'published',
+      categoryId: category.id,
+    },
+  });
+  assert.equal(result.response.status, 400);
+  assert.equal(result.payload.code, 'INVALID_IMAGE_TOKEN');
 });
 
 test('storage failures stay structured', async () => {
