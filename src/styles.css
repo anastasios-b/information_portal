@@ -28,3 +28,20 @@
 .app-skeleton{min-height:100vh}
 @keyframes skeleton-shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
 @media(prefers-reduced-motion:reduce){.skeleton{animation:none;background:#ecece6}}
+
+.brand-link{border:0;background:transparent;color:#1d201c;padding:0;min-height:auto;font-weight:800}
+.article-read{border-color:#2f66c8;background:#2f66c8;color:#fff}
+.article-read:hover{background:#2858ad;border-color:#2858ad}
+.article-edit{border-color:#2d7a62;background:#edf8f3;color:#1f604d}
+.article-edit:hover{background:#def1e8}
+.article-delete{border-color:#c34d46;background:#fff3f2;color:#9b342e}
+.article-delete:hover{background:#fde5e2}
+.article-page{width:min(900px,92vw);margin:auto;padding:3rem 0 6rem}
+.article-back{margin-bottom:1.25rem;border-color:#d5d7d0;background:#fff;color:#30352f}
+.article-document{border:1px solid #dedfd8;border-radius:18px;background:#fff;padding:clamp(1.5rem,4vw,3rem);box-shadow:0 12px 40px rgba(25,28,24,.05)}
+.article-document h1{font-size:clamp(2.2rem,5vw,4rem);margin:.8rem 0 1rem}
+.article-summary{font-size:1.08rem;line-height:1.7;color:#62675f;border-bottom:1px solid #ecece7;padding-bottom:1.5rem;margin-bottom:1.6rem}
+.article-body{white-space:pre-wrap;line-height:1.8;font-size:1rem}
+.article-page-skeleton{display:grid;gap:1.25rem}
+.article-page-skeleton .article-document{display:grid;gap:1.1rem}
+.article-body-skeleton{display:grid;gap:.7rem;margin-top:.7rem}
