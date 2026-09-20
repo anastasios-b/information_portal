@@ -1,120 +1,114 @@
 # Information Portal
 
-Lean information portal for small to medium-sized teams, implemented with React and Cloudflare Workers. It supports authenticated `administrator`, `editor`, and `reader` users plus an optional public mode.
+Lean React information portal for small to medium-sized teams, deployed as one Cloudflare Worker with Static Assets and R2 storage.
 
 ## Required behavior
 
-- `/admin` is the administration route.
+- The administration UI lives under `/admin`.
 - Initial setup is available only while no administrator exists. It creates the first administrator; there is no public registration afterward.
-- **Private mode:** anonymous visitors see the login screen.
-- **Public mode:** anonymous visitors can read published articles. Existing users and all stored data remain untouched when visibility changes.
+- **Private mode:** anonymous visitors must sign in.
+- **Public mode:** anonymous visitors can read published articles. Changing visibility never deletes users or articles.
 - **Administrators:** manage visibility, users, and articles.
 - **Editors:** create/import, edit, publish/draft, and delete articles.
 - **Readers:** read published content only.
-- The final administrator cannot be deleted or demoted. This is enforced server-side as well as represented in the UI.
+- The final administrator cannot be deleted or demoted.
 - All persisted database records use UUIDs, never integer IDs.
 
 ## Architecture
 
 - **UI:** React 19 + Vite.
-- **Hosting:** Cloudflare Workers.
-- **API:** Cloudflare Workers Functions under `/api/*`.
-- **Data:** a JSON database object in Cloudflare R2, bound as `PORTAL_DATA`.
-- **Concurrency:** database mutations use an R2 conditional write against the current ETag. Conflicting writes retry, which prevents concurrent changes from bypassing invariants such as the required administrator account.
-- **Authentication:** signed HttpOnly session cookie. Passwords are stored as PBKDF2-SHA-256 hashes with per-user random salts.
+- **Hosting:** Cloudflare Workers Static Assets.
+- **API:** native Worker routes under `/api/*`.
+- **Data:** one JSON database object in R2, bound as `PORTAL_DATA`.
+- **Database key:** `db/information-portal.json`.
+- **Concurrency:** R2 conditional writes against the current ETag retry on conflicts.
+- **Authentication:** signed HttpOnly session cookie.
+- **Passwords:** PBKDF2-SHA-256 with a per-user random salt.
+- **Observability:** Workers Logs enabled through `wrangler.jsonc`.
 
-The R2 object is stored at `db/information-portal.json`. Its root, settings record, user records, and article records all carry UUID identifiers.
+The database root, settings record, user records, and article records all carry UUID identifiers.
 
-## Data shape
+## Automated verification
 
-```json
-{
-  "id": "UUID",
-  "schemaVersion": 1,
-  "settings": {
-    "id": "UUID",
-    "mode": "private"
-  },
-  "users": [
-    {
-      "id": "UUID",
-      "email": "admin@example.com",
-      "role": "administrator"
-    }
-  ],
-  "articles": [
-    {
-      "id": "UUID",
-      "title": "Example",
-      "status": "published",
-      "authorId": "UUID"
-    }
-  ]
-}
+`npm run build` runs the Worker API regression suite before Vite builds the UI. The tests cover:
+
+- initial administrator setup and registration lockout
+- UUID-backed persistence
+- login
+- private/public visibility
+- administrator user management
+- final-administrator delete/demotion protection
+- editor article permissions
+- reader permissions
+- password-change session invalidation
+- clean JSON infrastructure errors
+- presence of the required UI features
+
+Run them directly with:
+
+```bash
+npm test
 ```
 
-Password hashes and timestamps are omitted from the example.
-
 ## Local development
-
-Requirements: current Node.js LTS and npm.
 
 ```bash
 npm install
 cp .env.example .dev.vars
 ```
 
-Set a random `SESSION_SECRET` of at least 32 characters in `.dev.vars`. `BOOTSTRAP_TOKEN` is optional; when set, initial setup requires it.
+Set `SESSION_SECRET` to a random value of at least 32 characters. `BOOTSTRAP_TOKEN` is optional.
 
-Then run:
-
-```bash
-npm run dev:pages
-```
-
-Wrangler persists the R2 binding locally by default.
-
-## Cloudflare deployment
-
-1. Authenticate Wrangler:
+Build and run the complete Worker locally:
 
 ```bash
-npx wrangler login
+npm run dev:worker
 ```
 
-2. Create the production R2 bucket once:
+Wrangler provides local R2 persistence for development.
+
+## Cloudflare configuration
+
+Create the R2 bucket once:
 
 ```bash
 npx wrangler r2 bucket create information-portal-data
 ```
 
-3. Create or connect the Cloudflare Workers project named `information-portal`.
-
-4. Configure the session secret before the deployment that uses it:
+Configure the Worker secret:
 
 ```bash
-npx wrangler pages secret put SESSION_SECRET --project-name information-portal
+npx wrangler secret put SESSION_SECRET
 ```
 
-Optionally protect first-run setup with:
+Optionally protect initial setup:
 
 ```bash
-npx wrangler pages secret put BOOTSTRAP_TOKEN --project-name information-portal
+npx wrangler secret put BOOTSTRAP_TOKEN
 ```
 
-5. Build and deploy:
+For Git-connected Workers Builds use:
 
-```bash
-npm run deploy
+```text
+Build command:  npm run build
+Deploy command: npx wrangler deploy
 ```
 
-For Git-connected Workers Builds, use `npm run build` as the build command and `npx wrangler deploy` as the deploy command. `wrangler.jsonc` is the source of truth for the Worker entry point, static assets, SPA fallback, and R2 binding.
+The R2 binding is declared in `wrangler.jsonc`:
+
+```json
+{
+  "binding": "PORTAL_DATA",
+  "bucket_name": "information-portal-data"
+}
+```
 
 ## Security notes
 
-- R2 is accessed only by Worker; credentials are never sent to the React client.
+- R2 is only accessible server-side through the Worker binding.
 - Session cookies are HttpOnly, SameSite=Lax, and Secure on HTTPS.
-- Mutating API requests reject cross-origin browser requests.
-- React renders article text as text rather than raw HTML, avoiding an unnecessary HTML/Markdown injection surface.
-- Changing a user's password rotates their session nonce, invalidating existing sessions for that user.
-- For Internet-facing deployments, add Cloudflare rate limiting/WAF rules to the login and setup endpoints as appropriate for your threat model.
+- Mutating requests reject cross-origin browser requests.
+- Article bodies are rendered as text rather than raw HTML.
+- Password changes rotate the user's session nonce and invalidate existing sessions.
+- R2 write conflicts cannot silently bypass administrator-count invariants.
+- Add Cloudflare rate limiting/WAF controls for login/setup if the portal becomes Internet-facing at meaningful scale.
