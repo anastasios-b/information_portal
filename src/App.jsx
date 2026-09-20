@@ -52,6 +52,7 @@ export default function App() {
   }
 
   if (boot.mode === 'private' && !boot.user) return <Login mode={boot.mode} refresh={refresh} />;
+  if (path.startsWith('/articles/')) return <ArticlePage path={path} boot={boot} refresh={refresh} />;
   return <Home boot={boot} refresh={refresh} />;
 }
 
@@ -128,7 +129,6 @@ function Setup({ boot, refresh }) {
 function Home({ boot, refresh }) {
   const [articles, setArticles] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [open, setOpen] = useState();
   const [query, setQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [error, setError] = useState('');
@@ -196,7 +196,7 @@ function Home({ boot, refresh }) {
             <div className="article-meta"><span className="tag">{categoryMap.get(article.categoryId) || 'Uncategorized'}</span><small>{new Date(article.updatedAt).toLocaleString()}</small></div>
             <h2>{article.title}</h2><p>{article.summary || article.content.slice(0, 160)}</p>
           </div>
-          <button className="link" onClick={() => setOpen(article)}>Read article →</button>
+          <button className="article-read" onClick={() => navigate(`/articles/${article.id}`)}>Read article →</button>
           </article>)}
         </section>
         {!articles.length && !error && <div className="empty">No published articles yet.</div>}
@@ -204,13 +204,76 @@ function Home({ boot, refresh }) {
       </>}
     </main>
 
-    {open && <div className="overlay" onMouseDown={() => setOpen()}>
-      <article className="modal" onMouseDown={(event) => event.stopPropagation()}>
-        <button className="close" onClick={() => setOpen()}>×</button>
-        <span className="tag">{categoryMap.get(open.categoryId) || 'Uncategorized'}</span>
-        <h1>{open.title}</h1>{open.summary && <p className="summary">{open.summary}</p>}<div className="content">{open.content}</div>
-      </article>
-    </div>}
+  </>;
+}
+
+function ArticlePage({ path, boot, refresh }) {
+  const articleId = path.split('/').filter(Boolean)[1] || '';
+  const [article, setArticle] = useState();
+  const [categories, setCategories] = useState([]);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    const categoryLoader = boot.mode === 'public' ? cachedPortalApi : api;
+
+    Promise.all([
+      api(`/api/articles/${articleId}`),
+      categoryLoader('/api/categories'),
+    ])
+      .then(([articleData, categoryData]) => {
+        if (!active) return;
+        setArticle(articleData.article);
+        setCategories(categoryData.categories);
+        setError('');
+      })
+      .catch((err) => {
+        if (active) setError(err.message);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => { active = false; };
+  }, [articleId, boot.mode, boot.user?.id]);
+
+  const categoryName = categories.find((category) => category.id === article?.categoryId)?.name || 'Uncategorized';
+
+  const logout = async () => {
+    await api('/api/logout', { method: 'POST', body: '{}' });
+    await refresh();
+    navigate('/');
+  };
+
+  return <>
+    <header className="top">
+      <button className="brand-link" onClick={() => navigate('/')}>Information Portal</button>
+      <div>
+        <span className="pill">{boot.mode}</span>
+        {boot.user ? <>
+          <span className="who">{boot.user.email}</span>
+          {['administrator', 'editor'].includes(boot.user.role) && <button className="secondary" onClick={() => navigate('/admin/articles')}>Admin</button>}
+          <button className="secondary" onClick={logout}>Log out</button>
+        </> : <button className="secondary" onClick={() => navigate('/admin/articles')}>Staff login</button>}
+      </div>
+    </header>
+
+    <main className="article-page">
+      {loading ? <ArticlePageSkeleton /> : error ? <ErrorBox text={error} /> : article ? <>
+        <button className="article-back" onClick={() => navigate('/')}>← Back to portal</button>
+        <article className="article-document">
+          <div className="article-meta">
+            <span className="tag">{categoryName}</span>
+            <small>Updated {new Date(article.updatedAt).toLocaleString()}</small>
+          </div>
+          <h1>{article.title}</h1>
+          {article.summary && <p className="article-summary">{article.summary}</p>}
+          <div className="article-body">{article.content}</div>
+        </article>
+      </> : null}
+    </main>
   </>;
 }
 
@@ -334,7 +397,7 @@ function Articles() {
       <div className="card"><h2>Existing articles</h2><div className="records" aria-busy={loading}>
         {loading ? <RecordSkeleton count={4} /> : items.map((article) => <div className="record" key={article.id}>
           <div><b>{article.title}</b><small>{categoryMap.get(article.categoryId) || 'Uncategorized'} · {article.status} · {article.id}</small></div>
-          <div><button className="secondary" onClick={() => edit(article)}>Edit</button><button className="danger" onClick={() => remove(article)}>Delete</button></div>
+          <div><button className="article-edit" onClick={() => edit(article)}>Edit</button><button className="article-delete" onClick={() => remove(article)}>Delete</button></div>
         </div>)}
       </div></div>
     </div>
@@ -516,6 +579,24 @@ function PortalSkeleton() {
         <div><Skeleton width="90px" height="20px" /><Skeleton width="72%" height="25px" /><Skeleton width="100%" height="14px" /><Skeleton width="86%" height="14px" /></div>
         <Skeleton width="105px" height="14px" />
       </article>)}
+    </div>
+  </div>;
+}
+
+function ArticlePageSkeleton() {
+  return <div className="article-page-skeleton" aria-hidden="true">
+    <Skeleton width="120px" height="38px" />
+    <div className="article-document">
+      <div className="article-meta"><Skeleton width="90px" height="22px" /><Skeleton width="180px" height="12px" /></div>
+      <Skeleton width="72%" height="48px" />
+      <Skeleton width="88%" height="20px" />
+      <div className="article-body-skeleton">
+        <Skeleton width="100%" height="14px" />
+        <Skeleton width="96%" height="14px" />
+        <Skeleton width="91%" height="14px" />
+        <Skeleton width="98%" height="14px" />
+        <Skeleton width="76%" height="14px" />
+      </div>
     </div>
   </div>;
 }
