@@ -1,6 +1,6 @@
 # Information Portal
 
-Lean information portal for small to medium-sized teams, implemented with React and Cloudflare Pages. It supports authenticated `administrator`, `editor`, and `reader` users plus an optional public mode.
+Lean information portal for small to medium-sized teams, implemented with React and Cloudflare Workers. It supports authenticated `administrator`, `editor`, and `reader` users plus an optional public mode.
 
 ## Required behavior
 
@@ -17,8 +17,8 @@ Lean information portal for small to medium-sized teams, implemented with React 
 ## Architecture
 
 - **UI:** React 19 + Vite.
-- **Hosting:** Cloudflare Pages.
-- **API:** Cloudflare Pages Functions under `/api/*`.
+- **Hosting:** Cloudflare Workers.
+- **API:** Cloudflare Workers Functions under `/api/*`.
 - **Data:** a JSON database object in Cloudflare R2, bound as `PORTAL_DATA`.
 - **Concurrency:** database mutations use an R2 conditional write against the current ETag. Conflicting writes retry, which prevents concurrent changes from bypassing invariants such as the required administrator account.
 - **Authentication:** signed HttpOnly session cookie. Passwords are stored as PBKDF2-SHA-256 hashes with per-user random salts.
@@ -88,7 +88,7 @@ npx wrangler login
 npx wrangler r2 bucket create information-portal-data
 ```
 
-3. Create or connect the Cloudflare Pages project named `information-portal`.
+3. Create or connect the Cloudflare Workers project named `information-portal`.
 
 4. Configure the session secret before the deployment that uses it:
 
@@ -108,11 +108,11 @@ npx wrangler pages secret put BOOTSTRAP_TOKEN --project-name information-portal
 npm run deploy
 ```
 
-For Git-connected Pages deployments, use `npm run build` as the build command and `dist` as the output directory. `wrangler.jsonc` is the source of truth for the R2 binding.
+For Git-connected Workers Builds, use `npm run build` as the build command and `npx wrangler deploy` as the deploy command. `wrangler.jsonc` is the source of truth for the Worker entry point, static assets, SPA fallback, and R2 binding.
 
 ## Security notes
 
-- R2 is accessed only by Pages Functions; credentials are never sent to the React client.
+- R2 is accessed only by Worker; credentials are never sent to the React client.
 - Session cookies are HttpOnly, SameSite=Lax, and Secure on HTTPS.
 - Mutating API requests reject cross-origin browser requests.
 - React renders article text as text rather than raw HTML, avoiding an unnecessary HTML/Markdown injection surface.
