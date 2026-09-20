@@ -335,3 +335,34 @@ test('storage failures stay structured', async () => {
   assert.equal(result.payload.code, 'STORAGE_READ_FAILED');
   assert.match(result.payload.requestId, UUID_RE);
 });
+
+
+test('new password hashes use the Worker-safe PBKDF2 cost and remain verifiable', async () => {
+  const e = env();
+  const admin = await setupAdmin(e);
+
+  let result = await call(e, '/api/admin/users', {
+    method: 'POST',
+    cookie: admin.cookie,
+    body: {
+      email: 'hash-check@example.com',
+      password: 'worker-safe-password',
+      role: 'reader',
+    },
+  });
+  assert.equal(result.response.status, 201);
+
+  const usersStore = e.PORTAL_DATA.data(KEYS.users);
+  const created = usersStore.users.find((user) => user.email === 'hash-check@example.com');
+  assert.equal(created.password.algorithm, 'PBKDF2-SHA-256');
+  assert.equal(created.password.iterations, 60000);
+
+  result = await call(e, '/api/login', {
+    method: 'POST',
+    body: {
+      email: 'hash-check@example.com',
+      password: 'worker-safe-password',
+    },
+  });
+  assert.equal(result.response.status, 200);
+});
