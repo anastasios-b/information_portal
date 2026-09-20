@@ -723,28 +723,57 @@ function articlePlainText(content) {
 }
 
 function renderArticleContent(content) {
-  const text = String(content || '');
-  const pattern = /\[\[image:([^|\]\r\n]+)\|(25|50|75|100)\]\]/gi;
+  const lines = String(content || '').split('\n');
   const nodes = [];
-  let cursor = 0;
-  let match;
-  let index = 0;
+  let keyIndex = 0;
 
-  while ((match = pattern.exec(text))) {
-    if (match.index > cursor) {
-      nodes.push(<span className="article-text" key={`text-${index++}`}>{text.slice(cursor, match.index)}</span>);
+  lines.forEach((line, lineIndex) => {
+    const images = extractInlineImages(line);
+    const onlyImages = images.length > 1 &&
+      images.every((image) => image.width <= 50) &&
+      articlePlainText(line) === '';
+
+    if (onlyImages) {
+      nodes.push(
+        <div className="inline-article-image-row" key={`row-${lineIndex}`}>
+          {images.map((image) => <figure
+            className="inline-article-image"
+            style={{ gridColumn: `span ${image.width / 25}` }}
+            key={`row-image-${image.reference}-${keyIndex++}`}
+          >
+            <img src={articleImageUrl(image.reference)} alt={image.reference} loading="lazy" />
+          </figure>)}
+        </div>,
+      );
+    } else {
+      const pattern = /\[\[image:([^|\]\r\n]+)\|(25|50|75|100)\]\]/gi;
+      let cursor = 0;
+      let match;
+
+      while ((match = pattern.exec(line))) {
+        if (match.index > cursor) {
+          nodes.push(<span className="article-text" key={`text-${keyIndex++}`}>{line.slice(cursor, match.index)}</span>);
+        }
+
+        const reference = match[1];
+        const width = Number(match[2]);
+        nodes.push(
+          <figure className="inline-article-image" style={{ width: `${width}%` }} key={`image-${reference}-${keyIndex++}`}>
+            <img src={articleImageUrl(reference)} alt={reference} loading="lazy" />
+          </figure>,
+        );
+        cursor = pattern.lastIndex;
+      }
+
+      if (cursor < line.length) {
+        nodes.push(<span className="article-text" key={`text-${keyIndex++}`}>{line.slice(cursor)}</span>);
+      }
     }
-    const reference = match[1];
-    const width = Number(match[2]);
-    nodes.push(<figure className="inline-article-image" style={{ width: `${width}%` }} key={`image-${reference}-${index++}`}>
-      <img src={articleImageUrl(reference)} alt={reference} loading="lazy" />
-    </figure>);
-    cursor = pattern.lastIndex;
-  }
 
-  if (cursor < text.length) {
-    nodes.push(<span className="article-text" key={`text-${index}`}>{text.slice(cursor)}</span>);
-  }
+    if (lineIndex < lines.length - 1) {
+      nodes.push(<span className="article-line-break" aria-hidden="true" key={`break-${lineIndex}`}>{'\n'}</span>);
+    }
+  });
 
   return nodes;
 }
