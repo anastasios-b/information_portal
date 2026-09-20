@@ -321,7 +321,7 @@ function Articles() {
       <form className="card form" onSubmit={save}>
         <h2>{id ? 'Edit article' : 'New article'}</h2>
         <Field label="Title"><input required maxLength="200" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
-        <Field label="Category"><select required value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}><option value="">Select category</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></Field>
+        <Field label="Category">{loading ? <Skeleton height="41px" /> : <select required value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}><option value="">Select category</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select>}</Field>
         <Field label="Summary"><textarea rows="3" maxLength="600" value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} /></Field>
         <Field label="Content"><textarea rows="14" required value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} /></Field>
         <Field label="Status"><select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}><option value="draft">Draft</option><option value="published">Published</option></select></Field>
