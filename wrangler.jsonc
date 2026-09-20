@@ -1,8 +1,13 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "information-portal",
-  "pages_build_output_dir": "./dist",
+  "main": "./worker/index.js",
   "compatibility_date": "2026-09-20",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
   "r2_buckets": [
     {
       "binding": "PORTAL_DATA",
