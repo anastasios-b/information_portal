@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { api, articleImageUrl, cachedPortalApi, clearPortalCache, uploadArticleImage } from './api.js';
+import { api, articleImageUrl, cachedPortalApi, clearPortalCache, listArticleImages, uploadArticleImage } from './api.js';
 
 const ADMIN_ROUTES = ['/admin/articles', '/admin/categories', '/admin/users', '/admin/settings'];
 
@@ -335,7 +335,12 @@ function Articles() {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [imageBusy, setImageBusy] = useState(false);
+  const [mediaOpen, setMediaOpen] = useState(false);
+  const [mediaItems, setMediaItems] = useState([]);
+  const [mediaLoading, setMediaLoading] = useState(false);
+  const [mediaError, setMediaError] = useState('');
   const contentRef = useRef(null);
+  const insertRangeRef = useRef({ start: 0, end: 0 });
 
   const load = async () => {
     setLoading(true);
@@ -371,6 +376,48 @@ function Articles() {
     catch (err) { setError(err.message); }
   };
 
+  const rememberInsertionRange = () => {
+    const textarea = contentRef.current;
+    insertRangeRef.current = {
+      start: textarea?.selectionStart ?? form.content.length,
+      end: textarea?.selectionEnd ?? textarea?.selectionStart ?? form.content.length,
+    };
+  };
+
+  const insertImageReference = (reference, width = 100) => {
+    const { start, end } = insertRangeRef.current;
+    const token = `[[image:${reference}|${width}]]`;
+    setForm((current) => {
+      const safeStart = Math.min(start, current.content.length);
+      const safeEnd = Math.min(Math.max(end, safeStart), current.content.length);
+      const before = current.content.slice(0, safeStart);
+      const after = current.content.slice(safeEnd);
+      const prefix = before && !before.endsWith('\n') ? '\n' : '';
+      const suffix = after && !after.startsWith('\n') ? '\n' : '';
+      return { ...current, content: `${before}${prefix}${token}${suffix}${after}` };
+    });
+  };
+
+  const openMediaLibrary = async () => {
+    rememberInsertionRange();
+    setMediaOpen(true);
+    setMediaLoading(true);
+    setMediaError('');
+    try {
+      const data = await listArticleImages();
+      setMediaItems(data.images || []);
+    } catch (err) {
+      setMediaError(err.message);
+    } finally {
+      setMediaLoading(false);
+    }
+  };
+
+  const selectMediaImage = (image) => {
+    insertImageReference(image.filename, 100);
+    setMediaOpen(false);
+  };
+
   const uploadImage = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -386,22 +433,13 @@ function Articles() {
       return;
     }
 
-    const textarea = contentRef.current;
-    const start = textarea?.selectionStart ?? form.content.length;
-    const end = textarea?.selectionEnd ?? start;
+    rememberInsertionRange();
     setImageBusy(true);
     setError('');
 
     try {
       const result = await uploadArticleImage(file);
-      const token = `[[image:${result.image.id}|100]]`;
-      setForm((current) => {
-        const before = current.content.slice(0, start);
-        const after = current.content.slice(end);
-        const prefix = before && !before.endsWith('\n') ? '\n' : '';
-        const suffix = after && !after.startsWith('\n') ? '\n' : '';
-        return { ...current, content: `${before}${prefix}${token}${suffix}${after}` };
-      });
+      insertImageReference(result.image.filename, 100);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -414,7 +452,7 @@ function Articles() {
     setForm((current) => {
       const target = extractInlineImages(current.content).find((image) => image.start === start);
       if (!target) return current;
-      const replacement = `[[image:${target.id}|${width}]]`;
+      const replacement = `[[image:${target.reference}|${width}]]`;
       return {
         ...current,
         content: current.content.slice(0, target.start) + replacement + current.content.slice(target.end),
@@ -452,15 +490,23 @@ function Articles() {
         <Field label="Title"><input required maxLength="200" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
         <Field label="Category">{loading ? <Skeleton height="41px" /> : <select required value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}><option value="">Select category</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select>}</Field>
         <Field label="Summary"><textarea rows="3" maxLength="600" value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} /></Field>
-        <Field label="Content"><textarea ref={contentRef} rows="14" required value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} /></Field>
-        <Field label="Add inline image"><input type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/avif" disabled={imageBusy} onChange={uploadImage} /></Field>
+        <Field label="Content"><textarea ref={contentRef} rows="14" required value={form.content} onSelect={rememberInsertionRange} onKeyUp={rememberInsertionRange} onClick={rememberInsertionRange} onChange={(e) => setForm({ ...form, content: e.target.value })} /></Field>
+        <Field label="Add inline image">
+          <div className="image-source-actions">
+            <label className="image-upload-button">
+              <span>Upload image</span>
+              <input type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/avif" disabled={imageBusy} onClick={rememberInsertionRange} onChange={uploadImage} />
+            </label>
+            <button type="button" className="secondary" onClick={openMediaLibrary}>Media library</button>
+          </div>
+        </Field>
         {imageBusy && <div className="image-upload-placeholder"><Skeleton width="100%" height="72px" /></div>}
         {inlineImages.length > 0 && <div className="inline-image-controls">
-          {inlineImages.map((image) => <div className="inline-image-control" key={`${image.id}-${image.start}`}>
-            <img src={articleImageUrl(image.id)} alt="" />
+          {inlineImages.map((image) => <div className="inline-image-control" key={`${image.reference}-${image.start}`}>
+            <img src={articleImageUrl(image.reference)} alt="" />
             <div>
               <b>Inline image</b>
-              <small>{image.id}</small>
+              <small>{image.reference}</small>
             </div>
             <label><span>Width</span><select value={image.width} onChange={(event) => resizeImage(image.start, Number(event.target.value))}>
               {[25, 50, 75, 100].map((width) => <option key={width} value={width}>{width}%</option>)}
@@ -482,6 +528,22 @@ function Articles() {
         </div>)}
       </div></div>
     </div>
+
+    {mediaOpen && <div className="media-library-overlay" onMouseDown={() => setMediaOpen(false)}>
+      <section className="media-library-modal" role="dialog" aria-modal="true" aria-label="Media library" onMouseDown={(event) => event.stopPropagation()}>
+        <header className="media-library-header">
+          <div><small>Article images</small><h2>Media library</h2></div>
+          <button type="button" className="secondary" onClick={() => setMediaOpen(false)}>Close</button>
+        </header>
+        {mediaError && <ErrorBox text={mediaError} />}
+        {mediaLoading ? <MediaLibrarySkeleton /> : mediaItems.length ? <div className="media-library-grid">
+          {mediaItems.map((image) => <button type="button" className="media-library-item" key={image.filename} onClick={() => selectMediaImage(image)}>
+            <img src={articleImageUrl(image.filename)} alt={image.filename} loading="lazy" />
+            <span title={image.filename}>{image.filename}</span>
+          </button>)}
+        </div> : !mediaError && <div className="empty">No images in the media library yet.</div>}
+      </section>
+    </div>}
   </section>;
 }
 
@@ -640,11 +702,11 @@ function Settings({ boot, refresh }) {
 
 function extractInlineImages(content) {
   const images = [];
-  const pattern = /\[\[image:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\|(25|50|75|100)\]\]/gi;
+  const pattern = /\[\[image:([^|\]\r\n]+)\|(25|50|75|100)\]\]/gi;
   let match;
   while ((match = pattern.exec(String(content || '')))) {
     images.push({
-      id: match[1],
+      reference: match[1],
       width: Number(match[2]),
       start: match.index,
       end: pattern.lastIndex,
@@ -655,14 +717,14 @@ function extractInlineImages(content) {
 
 function articlePlainText(content) {
   return String(content || '')
-    .replace(/\[\[image:[0-9a-f-]{36}\|(25|50|75|100)\]\]/gi, ' ')
+    .replace(/\[\[image:[^|\]\r\n]+\|(25|50|75|100)\]\]/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
 function renderArticleContent(content) {
   const text = String(content || '');
-  const pattern = /\[\[image:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\|(25|50|75|100)\]\]/gi;
+  const pattern = /\[\[image:([^|\]\r\n]+)\|(25|50|75|100)\]\]/gi;
   const nodes = [];
   let cursor = 0;
   let match;
@@ -672,10 +734,10 @@ function renderArticleContent(content) {
     if (match.index > cursor) {
       nodes.push(<span className="article-text" key={`text-${index++}`}>{text.slice(cursor, match.index)}</span>);
     }
-    const id = match[1];
+    const reference = match[1];
     const width = Number(match[2]);
-    nodes.push(<figure className="inline-article-image" style={{ width: `${width}%` }} key={`image-${id}-${index++}`}>
-      <img src={articleImageUrl(id)} alt="Article image" loading="lazy" />
+    nodes.push(<figure className="inline-article-image" style={{ width: `${width}%` }} key={`image-${reference}-${index++}`}>
+      <img src={articleImageUrl(reference)} alt={reference} loading="lazy" />
     </figure>);
     cursor = pattern.lastIndex;
   }
@@ -685,6 +747,15 @@ function renderArticleContent(content) {
   }
 
   return nodes;
+}
+
+function MediaLibrarySkeleton() {
+  return <div className="media-library-grid" aria-hidden="true">
+    {Array.from({ length: 8 }, (_, index) => <div className="media-library-item skeleton-media-item" key={index}>
+      <Skeleton width="100%" height="120px" />
+      <Skeleton width="76%" height="12px" />
+    </div>)}
+  </div>;
 }
 
 function AppSkeleton() {
