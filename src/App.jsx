@@ -505,9 +505,8 @@ function Articles() {
         {inlineImages.length > 0 && <div className="inline-image-controls">
           {inlineImages.map((image) => <div className="inline-image-control" key={`${image.reference}-${image.start}`}>
             <img src={articleImageUrl(image.reference)} alt="" />
-            <div>
-              <b>Inline image</b>
-              <small>{image.reference}</small>
+            <div className="inline-image-name">
+              <b title={image.reference}>{image.reference}</b>
             </div>
             <label><span>Width</span><select value={image.width} onChange={(event) => resizeImage(image.start, Number(event.target.value))}>
               {[25, 50, 75, 100].map((width) => <option key={width} value={width}>{width}%</option>)}
