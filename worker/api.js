@@ -164,13 +164,21 @@ async function listArticleImages(request, env) {
   }
 
   try {
-    const result = await env.PORTAL_DATA.list({
-      prefix: ARTICLE_IMAGE_PREFIX,
-      include: ['httpMetadata', 'customMetadata'],
-      limit: 1000,
-    });
+    const objects = [];
+    let cursor;
 
-    const images = (result.objects || [])
+    do {
+      const page = await env.PORTAL_DATA.list({
+        prefix: ARTICLE_IMAGE_PREFIX,
+        include: ['httpMetadata', 'customMetadata'],
+        limit: 1000,
+        ...(cursor ? { cursor } : {}),
+      });
+      objects.push(...(page.objects || []));
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+
+    const images = objects
       .map((object) => {
         const filename = object.key.slice(ARTICLE_IMAGE_PREFIX.length);
         if (!filename || isUuid(filename)) return null;
