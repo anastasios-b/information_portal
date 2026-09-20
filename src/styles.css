@@ -79,3 +79,9 @@
 
 .inline-image-name{min-width:0;width:100%;max-width:100%;overflow:hidden}
 .inline-image-name b{display:block;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.inline-article-image-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.75rem;align-items:start;margin:1.7rem 0}
+.inline-article-image-row .inline-article-image{width:auto;max-width:none;margin:0}
+.inline-article-image-row .inline-article-image img{height:auto}
+.article-line-break{white-space:pre}
+@media(max-width:640px){.inline-article-image-row{gap:.5rem}}
