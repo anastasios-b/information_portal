@@ -138,25 +138,41 @@ Deploy command: npx wrangler deploy
 
 Administrators and editors can upload JPEG, PNG, WebP, GIF, or AVIF images up to 5 MB while editing an article.
 
-Images are stored as separate R2 objects under:
+New images are stored by their original filename:
 
 ```text
-article-images/<UUID>
+article-images/hotel-map.png
+article-images/front-desk.webp
 ```
 
-The article body keeps a lightweight inline token at the insertion position:
+The article body references that filename directly:
 
 ```text
-[[image:<UUID>|50]]
+[[image:hotel-map.png|50]]
 ```
 
-The final value is the display width percentage. Supported widths are 25%, 50%, 75%, and 100%. Changing the width does not rewrite or duplicate the underlying image.
+The final value is the display width percentage. Supported widths are 25%, 50%, 75%, and 100%. Resizing only changes the article token; it does not rewrite the image binary.
+
+Duplicate filenames are rejected instead of overwriting an existing media object.
+
+### Media library
+
+The article editor includes a **Media library** button. It opens a fresh, uncached list of existing filename-backed article images from R2. Selecting an image inserts it at the current content cursor position.
+
+The media library endpoint is restricted to administrators and editors:
+
+```text
+GET /api/article-images
+```
 
 Image API:
 
 ```text
+GET  /api/article-images
 POST /api/article-images
-GET  /api/article-images/:uuid
+GET  /api/article-images/:filename
 ```
 
-Uploads require an administrator or editor session. In private portal mode image reads require authentication; in public mode article images can be read publicly so published articles render normally.
+Uploads send the original filename separately from the binary body. Image reads follow portal visibility: private mode requires authentication; public mode allows published article images to load publicly.
+
+Legacy UUID-backed image references remain readable for existing articles, but they are not shown in the filename-based media library because their original filenames were never stored.
