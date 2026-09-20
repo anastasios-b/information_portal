@@ -77,5 +77,5 @@
 .skeleton-media-item{pointer-events:none}
 @media(max-width:700px){.image-source-actions{grid-template-columns:1fr}.media-library-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.media-library-item img{height:100px}}
 
-.inline-image-name{min-width:0}
-.inline-image-name b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.inline-image-name{min-width:0;width:100%;max-width:100%;overflow:hidden}
+.inline-image-name b{display:block;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
