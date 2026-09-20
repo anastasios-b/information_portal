@@ -34,4 +34,11 @@ test('UI preserves required routes, search and controls', () => {
   assert.match(app, /disabled=\{selected\}/);
   assert.match(app, /target="_blank"/);
   assert.match(app, /rel="noopener noreferrer"/);
+
+  assert.match(app, /function AppSkeleton/);
+  assert.match(app, /function PortalSkeleton/);
+  assert.match(app, /function RecordSkeleton/);
+  assert.match(app, /className="skeleton"/);
+  assert.match(app, /aria-busy=\{loading\}/);
+  assert.doesNotMatch(app, />Loading…</);
 });
