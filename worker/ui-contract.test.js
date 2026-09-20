@@ -58,4 +58,11 @@ test('UI preserves required routes, search and controls', () => {
   assert.match(app, /\[25, 50, 75, 100\]/);
   assert.match(app, /className="inline-image-control"/);
   assert.match(app, /className="inline-article-image"/);
+  assert.match(app, /Media library/);
+  assert.match(app, /listArticleImages/);
+  assert.match(app, /className="media-library-overlay"/);
+  assert.match(app, /className="media-library-grid"/);
+  assert.match(app, /result\.image\.filename/);
+  assert.match(clientApi, /X-Article-Image-Filename/);
+  assert.match(clientApi, /encodeURIComponent\(filename\)/);
 });
