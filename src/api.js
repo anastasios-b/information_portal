@@ -15,8 +15,14 @@ export async function api(path, options = {}) {
     : { message: `Server request failed (HTTP ${response.status})` };
 
   if (!response.ok) {
-    const error = new Error(payload.error || payload.message || `Request failed (HTTP ${response.status})`);
+    let message = payload.error || payload.message || `Request failed (HTTP ${response.status})`;
+    if (response.status >= 500 && payload.code) {
+      message += ` [${payload.code}]`;
+    }
+    const error = new Error(message);
     error.status = response.status;
+    error.code = payload.code;
+    error.requestId = payload.requestId;
     throw error;
   }
 
