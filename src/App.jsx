@@ -1,27 +1,469 @@
-import {useEffect,useState} from 'react';
-import {api} from './api.js';
+import { useEffect, useMemo, useState } from 'react';
+import { api } from './api.js';
 
-const go=p=>{history.pushState({},'',p);dispatchEvent(new Event('portal-nav'))};
-function usePath(){const[p,setP]=useState(location.pathname);useEffect(()=>{const f=()=>setP(location.pathname);addEventListener('popstate',f);addEventListener('portal-nav',f);return()=>{removeEventListener('popstate',f);removeEventListener('portal-nav',f)}},[]);return p}
+const ADMIN_ROUTES = ['/admin/articles', '/admin/categories', '/admin/users', '/admin/settings'];
 
-export default function App(){const path=usePath(),[boot,setBoot]=useState(),[err,setErr]=useState('');const refresh=async()=>{try{setBoot(await api('/api/bootstrap'));setErr('')}catch(e){setErr(e.message)}};useEffect(()=>{refresh()},[]);if(err)return <Center><Card title="Portal unavailable" text={err}/></Center>;if(!boot)return <Center>Loading…</Center>;if(boot.setupRequired)return <Setup boot={boot} refresh={refresh}/>;if(path.startsWith('/admin')){if(!boot.user)return <Login mode={boot.mode} refresh={refresh}/>;if(!['administrator','editor'].includes(boot.user.role))return <Center><Card title="Access denied" text="Administrators and editors only." action={()=>go('/')}/></Center>;return <Admin boot={boot} refresh={refresh}/>};if(boot.mode==='private'&&!boot.user)return <Login mode={boot.mode} refresh={refresh}/>;return <Home boot={boot} refresh={refresh}/>}
+function navigate(path, { replace = false } = {}) {
+  if (replace) history.replaceState({}, '', path);
+  else history.pushState({}, '', path);
+  dispatchEvent(new Event('portal-nav'));
+}
 
-function Login({mode,refresh}){const[f,setF]=useState({email:'',password:''}),[busy,setBusy]=useState(false),[err,setErr]=useState('');const submit=async e=>{e.preventDefault();setBusy(true);try{await api('/api/login',{method:'POST',body:JSON.stringify(f)});await refresh()}catch(x){setErr(x.message)}finally{setBusy(false)}};return <Center><div className="card auth"><small>Information Portal</small><h1>Sign in</h1><p>{mode==='private'?'This portal is private. Sign in to continue.':'Staff access.'}</p><form onSubmit={submit}><Field label="Email"><input type="email" required value={f.email} onChange={e=>setF({...f,email:e.target.value})}/></Field><Field label="Password"><input type="password" required value={f.password} onChange={e=>setF({...f,password:e.target.value})}/></Field>{err&&<ErrorBox text={err}/>}<button disabled={busy}>{busy?'Signing in…':'Sign in'}</button>{mode==='public'&&<button type="button" className="secondary" onClick={()=>go('/')}>Back to portal</button>}</form></div></Center>}
+function usePath() {
+  const [path, setPath] = useState(location.pathname);
+  useEffect(() => {
+    const sync = () => setPath(location.pathname);
+    addEventListener('popstate', sync);
+    addEventListener('portal-nav', sync);
+    return () => {
+      removeEventListener('popstate', sync);
+      removeEventListener('portal-nav', sync);
+    };
+  }, []);
+  return path;
+}
 
-function Setup({boot,refresh}){const[f,setF]=useState({email:'',password:'',repeat:'',bootstrapToken:''}),[busy,setBusy]=useState(false),[err,setErr]=useState('');const submit=async e=>{e.preventDefault();if(f.password!==f.repeat)return setErr('Passwords do not match');setBusy(true);try{await api('/api/setup',{method:'POST',body:JSON.stringify({email:f.email,password:f.password,bootstrapToken:f.bootstrapToken})});await refresh();go('/admin')}catch(x){setErr(x.message)}finally{setBusy(false)}};return <Center><div className="card auth"><small>Initial setup</small><h1>Create first administrator</h1><p>Registration closes after this account is created.</p><form onSubmit={submit}><Field label="Email"><input type="email" required value={f.email} onChange={e=>setF({...f,email:e.target.value})}/></Field><Field label="Password"><input type="password" minLength="10" required value={f.password} onChange={e=>setF({...f,password:e.target.value})}/></Field><Field label="Repeat password"><input type="password" minLength="10" required value={f.repeat} onChange={e=>setF({...f,repeat:e.target.value})}/></Field>{boot.setupTokenRequired&&<Field label="Setup token"><input type="password" required value={f.bootstrapToken} onChange={e=>setF({...f,bootstrapToken:e.target.value})}/></Field>}{err&&<ErrorBox text={err}/>}<button disabled={busy}>{busy?'Creating…':'Complete setup'}</button></form></div></Center>}
+export default function App() {
+  const path = usePath();
+  const [boot, setBoot] = useState();
+  const [error, setError] = useState('');
 
-function Home({boot,refresh}){const[articles,setArticles]=useState([]),[open,setOpen]=useState(),[err,setErr]=useState('');useEffect(()=>{api('/api/articles').then(x=>setArticles(x.articles)).catch(e=>setErr(e.message))},[boot.mode,boot.user?.id]);const logout=async()=>{await api('/api/logout',{method:'POST',body:'{}'});await refresh();go('/')};return <><header className="top"><b>Information Portal</b><div><span className="pill">{boot.mode}</span>{boot.user?<><span className="who">{boot.user.email}</span>{['administrator','editor'].includes(boot.user.role)&&<button className="secondary" onClick={()=>go('/admin')}>Admin</button>}<button className="secondary" onClick={logout}>Log out</button></>:<button className="secondary" onClick={()=>go('/admin')}>Staff login</button>}</div></header><main className="main"><section className="hero"><small>Team knowledge</small><h1>Information that stays easy to find.</h1><p>Published procedures, references, notes and updates in one lean portal.</p></section>{err&&<ErrorBox text={err}/>}<section className="grid">{articles.map(a=><article className="card article" key={a.id}><div><small>{new Date(a.updatedAt).toLocaleString()}</small><h2>{a.title}</h2><p>{a.summary||a.content.slice(0,160)}</p></div><button className="link" onClick={()=>setOpen(a)}>Read article →</button></article>)}</section>{!articles.length&&!err&&<div className="empty">No published articles yet.</div>}</main>{open&&<div className="overlay" onMouseDown={()=>setOpen()}><article className="modal" onMouseDown={e=>e.stopPropagation()}><button className="close" onClick={()=>setOpen()}>×</button><small>{open.status}</small><h1>{open.title}</h1>{open.summary&&<p className="summary">{open.summary}</p>}<div className="content">{open.content}</div></article></div>}</>}
+  const refresh = async () => {
+    try {
+      setBoot(await api('/api/bootstrap'));
+      setError('');
+    } catch (err) {
+      setError(err.message);
+    }
+  };
 
-function Admin({boot,refresh}){const admin=boot.user.role==='administrator',[tab,setTab]=useState('articles');const logout=async()=>{await api('/api/logout',{method:'POST',body:'{}'});await refresh();go('/')};return <div className="layout"><aside><b>Information Portal</b><small>Admin panel</small><nav><button className={tab==='articles'?'active':''} onClick={()=>setTab('articles')}>Articles</button>{admin&&<button className={tab==='users'?'active':''} onClick={()=>setTab('users')}>Users</button>}{admin&&<button className={tab==='settings'?'active':''} onClick={()=>setTab('settings')}>Settings</button>}</nav><footer><span>{boot.user.email}</span><span>{boot.user.role}</span><button className="secondary" onClick={()=>go('/')}>View portal</button><button className="secondary" onClick={logout}>Log out</button></footer></aside><main className="admin">{tab==='articles'&&<Articles/>}{tab==='users'&&admin&&<Users boot={boot} refresh={refresh}/>} {tab==='settings'&&admin&&<Settings boot={boot} refresh={refresh}/>}</main></div>}
+  useEffect(() => { refresh(); }, []);
 
-function Articles(){const empty={title:'',summary:'',content:'',status:'draft'},[items,setItems]=useState([]),[f,setF]=useState(empty),[id,setId]=useState(),[err,setErr]=useState(''),[busy,setBusy]=useState(false);const load=()=>api('/api/articles?manage=1').then(x=>setItems(x.articles)).catch(e=>setErr(e.message));useEffect(()=>{load()},[]);const edit=a=>{setId(a.id);setF({title:a.title,summary:a.summary,content:a.content,status:a.status})};const reset=()=>{setId();setF(empty);setErr('')};const save=async e=>{e.preventDefault();setBusy(true);try{await api(id?'/api/articles/'+id:'/api/articles',{method:id?'PUT':'POST',body:JSON.stringify(f)});reset();await load()}catch(x){setErr(x.message)}finally{setBusy(false)}};const del=async a=>{if(confirm('Delete "'+a.title+'"?')){try{await api('/api/articles/'+a.id,{method:'DELETE',body:'{}'});await load()}catch(x){setErr(x.message)}}};const upload=async e=>{const file=e.target.files?.[0];if(!file)return;if(file.size>1000000)return setErr('Article file must be at most 1 MB');const text=await file.text();setF(x=>({...x,title:x.title||file.name.replace(/\.(txt|md)$/i,''),content:text}));e.target.value=''};return <section><Head title="Articles" text="Administrators and editors can create, import, edit and delete articles."/><div className="cols"><form className="card form" onSubmit={save}><h2>{id?'Edit article':'New article'}</h2><Field label="Title"><input required maxLength="200" value={f.title} onChange={e=>setF({...f,title:e.target.value})}/></Field><Field label="Summary"><textarea rows="3" maxLength="600" value={f.summary} onChange={e=>setF({...f,summary:e.target.value})}/></Field><Field label="Content"><textarea rows="14" required value={f.content} onChange={e=>setF({...f,content:e.target.value})}/></Field><Field label="Status"><select value={f.status} onChange={e=>setF({...f,status:e.target.value})}><option value="draft">Draft</option><option value="published">Published</option></select></Field><Field label="Import .txt or .md"><input type="file" accept=".txt,.md,text/plain,text/markdown" onChange={upload}/></Field>{err&&<ErrorBox text={err}/>}<button disabled={busy}>{busy?'Saving…':id?'Save changes':'Create article'}</button>{id&&<button type="button" className="secondary" onClick={reset}>Cancel</button>}</form><div className="card"><h2>Existing articles</h2><div className="records">{items.map(a=><div className="record" key={a.id}><div><b>{a.title}</b><small>{a.status} · {a.id}</small></div><div><button className="secondary" onClick={()=>edit(a)}>Edit</button><button className="danger" onClick={()=>del(a)}>Delete</button></div></div>)}</div></div></div></section>}
+  if (error) return <Center><Card title="Portal unavailable" text={error} /></Center>;
+  if (!boot) return <Center>Loading…</Center>;
+  if (boot.setupRequired) return <Setup boot={boot} refresh={refresh} />;
 
-function Users({boot,refresh}){const empty={email:'',password:'',repeat:'',role:'reader'},[items,setItems]=useState([]),[f,setF]=useState(empty),[id,setId]=useState(),[err,setErr]=useState(''),[busy,setBusy]=useState(false);const load=()=>api('/api/admin/users').then(x=>setItems(x.users)).catch(e=>setErr(e.message));useEffect(()=>{load()},[]);const edit=u=>{setId(u.id);setF({email:u.email,password:'',repeat:'',role:u.role})};const reset=()=>{setId();setF(empty);setErr('')};const save=async e=>{e.preventDefault();if(f.password!==f.repeat)return setErr('Passwords do not match');if(!id&&!f.password)return setErr('Password is required');setBusy(true);try{await api(id?'/api/admin/users/'+id:'/api/admin/users',{method:id?'PUT':'POST',body:JSON.stringify({email:f.email,password:f.password||undefined,role:f.role})});reset();await Promise.all([load(),refresh()])}catch(x){setErr(x.message)}finally{setBusy(false)}};const del=async u=>{if(!confirm('Delete '+u.email+'?'))return;try{await api('/api/admin/users/'+u.id,{method:'DELETE',body:'{}'});await Promise.all([load(),refresh()]);if(u.id===boot.user.id)go('/')}catch(x){setErr(x.message)}};const count=items.filter(x=>x.role==='administrator').length;return <section><Head title="Users" text="No public registration. Administrators create and maintain all accounts."/><div className="cols"><form className="card form" onSubmit={save}><h2>{id?'Edit user':'Create user'}</h2><Field label="Email"><input type="email" required value={f.email} onChange={e=>setF({...f,email:e.target.value})}/></Field><Field label={id?'New password (optional)':'Password'}><input type="password" minLength={f.password?10:undefined} required={!id} value={f.password} onChange={e=>setF({...f,password:e.target.value})}/></Field><Field label="Repeat password"><input type="password" required={!id||!!f.password} value={f.repeat} onChange={e=>setF({...f,repeat:e.target.value})}/></Field><Field label="Role"><select value={f.role} onChange={e=>setF({...f,role:e.target.value})}>{['administrator','editor','reader'].map(r=><option key={r}>{r}</option>)}</select></Field>{err&&<ErrorBox text={err}/>}<button disabled={busy}>{busy?'Saving…':id?'Save user':'Create user'}</button>{id&&<button type="button" className="secondary" onClick={reset}>Cancel</button>}</form><div className="card"><h2>Accounts</h2><div className="records">{items.map(u=>{const protectedAdmin=u.id===boot.user.id&&u.role==='administrator'&&count===1;return <div className="record" key={u.id}><div><b>{u.email}</b><small>{u.role} · {u.id}</small></div><div><button className="secondary" onClick={()=>edit(u)}>Edit</button><button className="danger" disabled={protectedAdmin} onClick={()=>del(u)}>Delete</button></div></div>})}</div><p className="hint">The API also blocks deletion or demotion of the final administrator.</p></div></div></section>}
+  if (path.startsWith('/admin')) {
+    if (!boot.user) return <Login mode={boot.mode} refresh={refresh} />;
+    if (!['administrator', 'editor'].includes(boot.user.role)) {
+      return <Center><Card title="Access denied" text="Administrators and editors only." action={() => navigate('/')} /></Center>;
+    }
+    return <Admin path={path} boot={boot} refresh={refresh} />;
+  }
 
-function Settings({boot,refresh}){const[busy,setBusy]=useState(false),[err,setErr]=useState('');const change=async mode=>{setBusy(true);try{await api('/api/admin/settings',{method:'PATCH',body:JSON.stringify({mode})});await refresh()}catch(x){setErr(x.message)}finally{setBusy(false)}};return <section><Head title="Settings" text="Changing visibility never deletes or recreates users or articles."/><div className="card settings"><h2>Portal visibility</h2><p>Private requires login. Public exposes published articles only; drafts and administration remain protected.</p><div className="modes"><button disabled={busy} className={boot.mode==='private'?'chosen':''} onClick={()=>change('private')}>Private<br/><small>Login required</small></button><button disabled={busy} className={boot.mode==='public'?'chosen':''} onClick={()=>change('public')}>Public<br/><small>Published articles visible</small></button></div>{err&&<ErrorBox text={err}/>}</div></section>}
+  if (boot.mode === 'private' && !boot.user) return <Login mode={boot.mode} refresh={refresh} />;
+  return <Home boot={boot} refresh={refresh} />;
+}
 
-const Field=({label,children})=><label><span>{label}</span>{children}</label>;
-const ErrorBox=({text})=><div className="error">{text}</div>;
-const Head=({title,text})=><header className="head"><small>Administration</small><h1>{title}</h1><p>{text}</p></header>;
-const Center=({children})=><main className="center">{children}</main>;
-const Card=({title,text,action})=><div className="card auth"><h1>{title}</h1><p>{text}</p>{action&&<button onClick={action}>Back to portal</button>}</div>;
+function Login({ mode, refresh }) {
+  const [form, setForm] = useState({ email: '', password: '' });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const submit = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      await api('/api/login', { method: 'POST', body: JSON.stringify(form) });
+      await refresh();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <Center><div className="card auth">
+    <small>Information Portal</small><h1>Sign in</h1>
+    <p>{mode === 'private' ? 'This portal is private. Sign in to continue.' : 'Staff access.'}</p>
+    <form onSubmit={submit}>
+      <Field label="Email"><input type="email" autoComplete="username" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
+      <Field label="Password"><input type="password" autoComplete="current-password" required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></Field>
+      {error && <ErrorBox text={error} />}
+      <button disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+      {mode === 'public' && <button type="button" className="secondary" onClick={() => navigate('/')}>Back to portal</button>}
+    </form>
+  </div></Center>;
+}
+
+function Setup({ boot, refresh }) {
+  const [form, setForm] = useState({ email: '', password: '', repeat: '', bootstrapToken: '' });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (form.password !== form.repeat) return setError('Passwords do not match');
+    setBusy(true);
+    setError('');
+    try {
+      await api('/api/setup', {
+        method: 'POST',
+        body: JSON.stringify({ email: form.email, password: form.password, bootstrapToken: form.bootstrapToken }),
+      });
+      await refresh();
+      navigate('/admin/articles', { replace: true });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <Center><div className="card auth">
+    <small>Initial setup</small><h1>Create first administrator</h1>
+    <p>Registration closes after this account is created.</p>
+    <form onSubmit={submit}>
+      <Field label="Email"><input type="email" autoComplete="username" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
+      <Field label="Password"><input type="password" autoComplete="new-password" minLength="10" required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></Field>
+      <Field label="Repeat password"><input type="password" autoComplete="new-password" minLength="10" required value={form.repeat} onChange={(e) => setForm({ ...form, repeat: e.target.value })} /></Field>
+      {boot.setupTokenRequired && <Field label="Setup token"><input type="password" required value={form.bootstrapToken} onChange={(e) => setForm({ ...form, bootstrapToken: e.target.value })} /></Field>}
+      {error && <ErrorBox text={error} />}
+      <button disabled={busy}>{busy ? 'Creating…' : 'Complete setup'}</button>
+    </form>
+  </div></Center>;
+}
+
+function Home({ boot, refresh }) {
+  const [articles, setArticles] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [open, setOpen] = useState();
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    Promise.all([api('/api/articles'), api('/api/categories')])
+      .then(([articleData, categoryData]) => {
+        setArticles(articleData.articles);
+        setCategories(categoryData.categories);
+        setError('');
+      })
+      .catch((err) => setError(err.message));
+  }, [boot.mode, boot.user?.id]);
+
+  const categoryMap = useMemo(() => new Map(categories.map((category) => [category.id, category.name])), [categories]);
+
+  const logout = async () => {
+    await api('/api/logout', { method: 'POST', body: '{}' });
+    await refresh();
+    navigate('/');
+  };
+
+  return <>
+    <header className="top">
+      <b>Information Portal</b>
+      <div>
+        <span className="pill">{boot.mode}</span>
+        {boot.user ? <>
+          <span className="who">{boot.user.email}</span>
+          {['administrator', 'editor'].includes(boot.user.role) && <button className="secondary" onClick={() => navigate('/admin/articles')}>Admin</button>}
+          <button className="secondary" onClick={logout}>Log out</button>
+        </> : <button className="secondary" onClick={() => navigate('/admin/articles')}>Staff login</button>}
+      </div>
+    </header>
+
+    <main className="main">
+      <section className="hero"><small>Team knowledge</small><h1>Information that stays easy to find.</h1><p>Published procedures, references, notes and updates in one lean portal.</p></section>
+      {error && <ErrorBox text={error} />}
+      <section className="grid">
+        {articles.map((article) => <article className="card article" key={article.id}>
+          <div>
+            <div className="article-meta"><span className="tag">{categoryMap.get(article.categoryId) || 'Uncategorized'}</span><small>{new Date(article.updatedAt).toLocaleString()}</small></div>
+            <h2>{article.title}</h2><p>{article.summary || article.content.slice(0, 160)}</p>
+          </div>
+          <button className="link" onClick={() => setOpen(article)}>Read article →</button>
+        </article>)}
+      </section>
+      {!articles.length && !error && <div className="empty">No published articles yet.</div>}
+    </main>
+
+    {open && <div className="overlay" onMouseDown={() => setOpen()}>
+      <article className="modal" onMouseDown={(event) => event.stopPropagation()}>
+        <button className="close" onClick={() => setOpen()}>×</button>
+        <span className="tag">{categoryMap.get(open.categoryId) || 'Uncategorized'}</span>
+        <h1>{open.title}</h1>{open.summary && <p className="summary">{open.summary}</p>}<div className="content">{open.content}</div>
+      </article>
+    </div>}
+  </>;
+}
+
+function Admin({ path, boot, refresh }) {
+  const isAdmin = boot.user.role === 'administrator';
+  const allowedRoutes = isAdmin ? ADMIN_ROUTES : ['/admin/articles', '/admin/categories'];
+  const effectivePath = path === '/admin' ? '/admin/articles' : path;
+
+  useEffect(() => {
+    if (path === '/admin') navigate('/admin/articles', { replace: true });
+    else if (!allowedRoutes.includes(path)) navigate('/admin/articles', { replace: true });
+  }, [path, isAdmin]);
+
+  const logout = async () => {
+    await api('/api/logout', { method: 'POST', body: '{}' });
+    await refresh();
+    navigate('/');
+  };
+
+  const activePath = allowedRoutes.includes(effectivePath) ? effectivePath : '/admin/articles';
+
+  return <div className="layout">
+    <aside>
+      <b>Information Portal</b><small>Admin panel</small>
+      <nav>
+        <NavButton path="/admin/articles" current={activePath}>Articles</NavButton>
+        <NavButton path="/admin/categories" current={activePath}>Article Categories</NavButton>
+        {isAdmin && <NavButton path="/admin/users" current={activePath}>Users</NavButton>}
+        {isAdmin && <NavButton path="/admin/settings" current={activePath}>Settings</NavButton>}
+      </nav>
+      <footer>
+        <span>{boot.user.email}</span><span>{boot.user.role}</span>
+        <a className="secondary button-link" href="/" target="_blank" rel="noopener noreferrer">View portal <NewTabIcon /></a>
+        <button className="secondary" onClick={logout}>Log out</button>
+      </footer>
+    </aside>
+
+    <main className="admin">
+      {activePath === '/admin/articles' && <Articles />}
+      {activePath === '/admin/categories' && <Categories />}
+      {activePath === '/admin/users' && isAdmin && <Users boot={boot} refresh={refresh} />}
+      {activePath === '/admin/settings' && isAdmin && <Settings boot={boot} refresh={refresh} />}
+    </main>
+  </div>;
+}
+
+function NavButton({ path, current, children }) {
+  const selected = current === path;
+  return <button className={selected ? 'active' : ''} disabled={selected} onClick={() => navigate(path)}>{children}</button>;
+}
+
+function Articles() {
+  const empty = { title: '', summary: '', content: '', status: 'draft', categoryId: '' };
+  const [items, setItems] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [form, setForm] = useState(empty);
+  const [id, setId] = useState();
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    try {
+      const [articleData, categoryData] = await Promise.all([api('/api/articles?manage=1'), api('/api/categories?manage=1')]);
+      setItems(articleData.articles); setCategories(categoryData.categories); setError('');
+    } catch (err) { setError(err.message); }
+  };
+
+  useEffect(() => { load(); }, []);
+  const categoryMap = useMemo(() => new Map(categories.map((category) => [category.id, category.name])), [categories]);
+
+  const edit = (article) => {
+    setId(article.id);
+    setForm({ title: article.title, summary: article.summary, content: article.content, status: article.status, categoryId: article.categoryId || '' });
+    setError('');
+  };
+  const reset = () => { setId(undefined); setForm(empty); setError(''); };
+
+  const save = async (event) => {
+    event.preventDefault(); setBusy(true); setError('');
+    try {
+      await api(id ? `/api/articles/${id}` : '/api/articles', { method: id ? 'PUT' : 'POST', body: JSON.stringify(form) });
+      reset(); await load();
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  };
+
+  const remove = async (article) => {
+    if (!confirm(`Delete "${article.title}"?`)) return;
+    try { await api(`/api/articles/${article.id}`, { method: 'DELETE', body: '{}' }); await load(); }
+    catch (err) { setError(err.message); }
+  };
+
+  const upload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (file.size > 1_000_000) return setError('Article file must be at most 1 MB');
+    const text = await file.text();
+    setForm((current) => ({ ...current, title: current.title || file.name.replace(/\.(txt|md)$/i, ''), content: text }));
+    event.target.value = '';
+  };
+
+  return <section>
+    <Head title="Articles" text="Administrators and editors can create, import, edit and delete articles." />
+    {!categories.length && <div className="notice">Create at least one category before creating an article.<button className="secondary" onClick={() => navigate('/admin/categories')}>Manage categories</button></div>}
+    <div className="cols">
+      <form className="card form" onSubmit={save}>
+        <h2>{id ? 'Edit article' : 'New article'}</h2>
+        <Field label="Title"><input required maxLength="200" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
+        <Field label="Category"><select required value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}><option value="">Select category</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></Field>
+        <Field label="Summary"><textarea rows="3" maxLength="600" value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} /></Field>
+        <Field label="Content"><textarea rows="14" required value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} /></Field>
+        <Field label="Status"><select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}><option value="draft">Draft</option><option value="published">Published</option></select></Field>
+        <Field label="Import .txt or .md"><input type="file" accept=".txt,.md,text/plain,text/markdown" onChange={upload} /></Field>
+        {error && <ErrorBox text={error} />}
+        <button disabled={busy || !categories.length}>{busy ? 'Saving…' : id ? 'Save changes' : 'Create article'}</button>
+        {id && <button type="button" className="secondary" onClick={reset}>Cancel</button>}
+      </form>
+
+      <div className="card"><h2>Existing articles</h2><div className="records">
+        {items.map((article) => <div className="record" key={article.id}>
+          <div><b>{article.title}</b><small>{categoryMap.get(article.categoryId) || 'Uncategorized'} · {article.status} · {article.id}</small></div>
+          <div><button className="secondary" onClick={() => edit(article)}>Edit</button><button className="danger" onClick={() => remove(article)}>Delete</button></div>
+        </div>)}
+      </div></div>
+    </div>
+  </section>;
+}
+
+function Categories() {
+  const [items, setItems] = useState([]);
+  const [name, setName] = useState('');
+  const [id, setId] = useState();
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    try { const data = await api('/api/categories?manage=1'); setItems(data.categories); setError(''); }
+    catch (err) { setError(err.message); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const reset = () => { setId(undefined); setName(''); setError(''); };
+  const save = async (event) => {
+    event.preventDefault(); setBusy(true); setError('');
+    try {
+      await api(id ? `/api/categories/${id}` : '/api/categories', { method: id ? 'PUT' : 'POST', body: JSON.stringify({ name }) });
+      reset(); await load();
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  };
+  const edit = (category) => { setId(category.id); setName(category.name); setError(''); };
+  const remove = async (category) => {
+    if (!confirm(`Delete category "${category.name}"?`)) return;
+    try {
+      await api(`/api/categories/${category.id}`, { method: 'DELETE', body: '{}' });
+      if (id === category.id) reset();
+      await load();
+    } catch (err) { setError(err.message); }
+  };
+
+  return <section>
+    <Head title="Article Categories" text="Categories organize articles and are available to administrators and editors." />
+    <div className="cols">
+      <form className="card form" onSubmit={save}>
+        <h2>{id ? 'Edit category' : 'New category'}</h2>
+        <Field label="Name"><input required maxLength="80" value={name} onChange={(e) => setName(e.target.value)} /></Field>
+        {error && <ErrorBox text={error} />}
+        <button disabled={busy}>{busy ? 'Saving…' : id ? 'Save category' : 'Create category'}</button>
+        {id && <button type="button" className="secondary" onClick={reset}>Cancel</button>}
+      </form>
+      <div className="card"><h2>Article categories</h2><div className="records">
+        {items.map((category) => <div className="record" key={category.id}>
+          <div><b>{category.name}</b><small>{category.id}</small></div>
+          <div><button className="secondary" onClick={() => edit(category)}>Edit</button><button className="danger" onClick={() => remove(category)}>Delete</button></div>
+        </div>)}
+      </div>{!items.length && <p className="hint">No categories yet.</p>}</div>
+    </div>
+  </section>;
+}
+
+function Users({ boot, refresh }) {
+  const empty = { email: '', password: '', repeat: '', role: 'reader' };
+  const [items, setItems] = useState([]);
+  const [form, setForm] = useState(empty);
+  const [id, setId] = useState();
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    try { const data = await api('/api/admin/users'); setItems(data.users); setError(''); }
+    catch (err) { setError(err.message); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const edit = (user) => { setId(user.id); setForm({ email: user.email, password: '', repeat: '', role: user.role }); setError(''); };
+  const reset = () => { setId(undefined); setForm(empty); setError(''); };
+  const save = async (event) => {
+    event.preventDefault();
+    if (form.password !== form.repeat) return setError('Passwords do not match');
+    if (!id && !form.password) return setError('Password is required');
+    setBusy(true); setError('');
+    try {
+      await api(id ? `/api/admin/users/${id}` : '/api/admin/users', {
+        method: id ? 'PUT' : 'POST',
+        body: JSON.stringify({ email: form.email, password: form.password || undefined, role: form.role }),
+      });
+      reset(); await Promise.all([load(), refresh()]);
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  };
+  const remove = async (user) => {
+    if (!confirm(`Delete ${user.email}?`)) return;
+    try {
+      await api(`/api/admin/users/${user.id}`, { method: 'DELETE', body: '{}' });
+      await Promise.all([load(), refresh()]);
+      if (user.id === boot.user.id) navigate('/');
+    } catch (err) { setError(err.message); }
+  };
+  const adminCount = items.filter((item) => item.role === 'administrator').length;
+
+  return <section>
+    <Head title="Users" text="No public registration. Administrators create and maintain all accounts." />
+    <div className="cols">
+      <form className="card form" onSubmit={save}>
+        <h2>{id ? 'Edit user' : 'Create user'}</h2>
+        <Field label="Email"><input type="email" autoComplete="username" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
+        <Field label={id ? 'New password (optional)' : 'Password'}><input type="password" autoComplete="new-password" minLength={form.password ? 10 : undefined} required={!id} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></Field>
+        <Field label="Repeat password"><input type="password" autoComplete="new-password" required={!id || Boolean(form.password)} value={form.repeat} onChange={(e) => setForm({ ...form, repeat: e.target.value })} /></Field>
+        <Field label="Role"><select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>{['administrator', 'editor', 'reader'].map((role) => <option key={role}>{role}</option>)}</select></Field>
+        {error && <ErrorBox text={error} />}
+        <button disabled={busy}>{busy ? 'Saving…' : id ? 'Save user' : 'Create user'}</button>
+        {id && <button type="button" className="secondary" onClick={reset}>Cancel</button>}
+      </form>
+
+      <div className="card"><h2>Accounts</h2><div className="records">
+        {items.map((user) => {
+          const protectedAdmin = user.id === boot.user.id && user.role === 'administrator' && adminCount === 1;
+          return <div className="record" key={user.id}>
+            <div><b>{user.email}</b><small>{user.role} · {user.id}</small></div>
+            <div><button className="secondary" onClick={() => edit(user)}>Edit</button><button className="danger" disabled={protectedAdmin} onClick={() => remove(user)}>Delete</button></div>
+          </div>;
+        })}
+      </div><p className="hint">The API also blocks deletion or demotion of the final administrator.</p></div>
+    </div>
+  </section>;
+}
+
+function Settings({ boot, refresh }) {
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const change = async (mode) => {
+    if (mode === boot.mode || busy) return;
+    setBusy(true); setError('');
+    try {
+      await api('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ mode, password }) });
+      setPassword('');
+      await refresh();
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  };
+
+  return <section>
+    <Head title="Settings" text="Changing visibility preserves all users, categories and articles." />
+    <div className="card settings">
+      <h2>Portal visibility</h2>
+      <p>Private requires login. Public exposes published articles only; drafts and administration remain protected.</p>
+      <Field label="Confirm with your administrator password"><input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter password before switching" /></Field>
+      <div className="modes">
+        <button disabled={busy || boot.mode === 'private' || !password} className={boot.mode === 'private' ? 'chosen' : ''} onClick={() => change('private')}>Private<br /><small>Login required</small></button>
+        <button disabled={busy || boot.mode === 'public' || !password} className={boot.mode === 'public' ? 'chosen' : ''} onClick={() => change('public')}>Public<br /><small>Published articles visible</small></button>
+      </div>
+      {error && <ErrorBox text={error} />}
+    </div>
+  </section>;
+}
+
+function NewTabIcon() {
+  return <svg className="new-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M13 11l6-6M19 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5" /></svg>;
+}
+
+const Field = ({ label, children }) => <label><span>{label}</span>{children}</label>;
+const ErrorBox = ({ text }) => <div className="error">{text}</div>;
+const Head = ({ title, text }) => <header className="head"><small>Administration</small><h1>{title}</h1><p>{text}</p></header>;
+const Center = ({ children }) => <main className="center">{children}</main>;
+const Card = ({ title, text, action }) => <div className="card auth"><h1>{title}</h1><p>{text}</p>{action && <button onClick={action}>Back to portal</button>}</div>;
