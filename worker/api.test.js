@@ -49,6 +49,21 @@ class MockR2 {
     });
     return { etag };
   }
+  async list(options = {}) {
+    const prefix = options.prefix || '';
+    const objects = [...this.items.entries()]
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([key, entry]) => ({
+        key,
+        size: typeof entry.value === 'string' ? new TextEncoder().encode(entry.value).byteLength : entry.value.byteLength,
+        etag: entry.etag,
+        uploaded: new Date(),
+        httpMetadata: entry.httpMetadata,
+        customMetadata: entry.customMetadata,
+      }))
+      .sort((a, b) => a.key.localeCompare(b.key));
+    return { objects, truncated: false };
+  }
   data(key) {
     const entry = this.items.get(key);
     return entry && typeof entry.value === 'string' ? JSON.parse(entry.value) : null;
@@ -68,9 +83,10 @@ async function call(environment, path, { method = 'GET', body, cookie } = {}) {
   }), environment);
   return { response, payload: response.status === 204 ? null : await response.json() };
 }
-async function rawCall(environment, path, { method = 'GET', body, cookie, contentType } = {}) {
+async function rawCall(environment, path, { method = 'GET', body, cookie, contentType, filename } = {}) {
   const headers = new Headers();
   if (contentType) headers.set('Content-Type', contentType);
+  if (filename) headers.set('X-Article-Image-Filename', encodeURIComponent(filename));
   if (method !== 'GET') headers.set('Origin', ORIGIN);
   if (cookie) headers.set('Cookie', cookie);
   const response = await handleApiRequest(new Request(`${ORIGIN}${path}`, { method, headers, body }), environment);
@@ -215,23 +231,27 @@ test('last administrator invariant remains enforced in users store', async () =>
 });
 
 
-test('inline article images upload to R2 and respect portal privacy', async () => {
+test('inline article images use filenames, appear in media library and respect portal privacy', async () => {
   const e = env();
   const admin = await setupAdmin(e);
   const category = await createCategory(e, admin.cookie);
   const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+  const filename = 'hotel-map.png';
 
   let result = await rawCall(e, '/api/article-images', {
     method: 'POST',
     cookie: admin.cookie,
     contentType: 'image/png',
+    filename,
     body: bytes,
   });
   assert.equal(result.response.status, 201);
-  assert.match(result.payload.image.id, UUID_RE);
-  const imageId = result.payload.image.id;
-  const imageKey = `article-images/${imageId}`;
-  assert.ok(e.PORTAL_DATA.items.has(imageKey));
+  assert.equal(result.payload.image.filename, filename);
+  assert.ok(e.PORTAL_DATA.items.has(`article-images/${filename}`));
+
+  result = await call(e, '/api/article-images', { cookie: admin.cookie });
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(result.payload.images.map((image) => image.filename), [filename]);
 
   result = await call(e, '/api/articles', {
     method: 'POST',
@@ -239,28 +259,52 @@ test('inline article images upload to R2 and respect portal privacy', async () =
     body: {
       title: 'With image',
       summary: '',
-      content: `Before\n[[image:${imageId}|50]]\nAfter`,
+      content: `Before\n[[image:${filename}|50]]\nAfter`,
       status: 'published',
       categoryId: category.id,
     },
   });
   assert.equal(result.response.status, 201);
 
-  result = await rawCall(e, `/api/article-images/${imageId}`, { cookie: admin.cookie });
+  result = await rawCall(e, `/api/article-images/${encodeURIComponent(filename)}`, { cookie: admin.cookie });
   assert.equal(result.response.status, 200);
   assert.equal(result.response.headers.get('content-type'), 'image/png');
   assert.deepEqual([...new Uint8Array(result.payload)], [...bytes]);
 
-  result = await rawCall(e, `/api/article-images/${imageId}`);
+  result = await rawCall(e, `/api/article-images/${encodeURIComponent(filename)}`);
   assert.equal(result.response.status, 401);
+
+  result = await rawCall(e, '/api/article-images', {
+    method: 'POST',
+    cookie: admin.cookie,
+    contentType: 'image/png',
+    filename,
+    body: bytes,
+  });
+  assert.equal(result.response.status, 409);
+  assert.equal(result.payload.code, 'IMAGE_FILENAME_IN_USE');
 
   await call(e, '/api/admin/settings', {
     method: 'PATCH',
     cookie: admin.cookie,
     body: { mode: 'public', password: ADMIN_PASSWORD },
   });
-  result = await rawCall(e, `/api/article-images/${imageId}`);
+  result = await rawCall(e, `/api/article-images/${encodeURIComponent(filename)}`);
   assert.equal(result.response.status, 200);
+});
+
+test('legacy UUID-backed article images remain readable but are omitted from filename media library', async () => {
+  const e = env();
+  const admin = await setupAdmin(e);
+  const legacyId = crypto.randomUUID();
+  const bytes = new Uint8Array([1, 2, 3, 4]);
+  await e.PORTAL_DATA.put(`article-images/${legacyId}`, bytes, { httpMetadata: { contentType: 'image/png' } });
+
+  let result = await rawCall(e, `/api/article-images/${legacyId}`, { cookie: admin.cookie });
+  assert.equal(result.response.status, 200);
+
+  result = await call(e, '/api/article-images', { cookie: admin.cookie });
+  assert.deepEqual(result.payload.images, []);
 });
 
 test('invalid inline image tokens are rejected', async () => {
@@ -274,7 +318,7 @@ test('invalid inline image tokens are rejected', async () => {
     body: {
       title: 'Bad image token',
       summary: '',
-      content: 'Text [[image:not-a-uuid|42]]',
+      content: 'Text [[image:bad/name.png|50]]',
       status: 'published',
       categoryId: category.id,
     },
