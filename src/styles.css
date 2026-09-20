@@ -9,3 +9,9 @@
 .tag{display:inline-flex;align-items:center;width:max-content;padding:.24rem .52rem;border:1px solid #d7d9d1;border-radius:999px;background:#f6f6f2;color:#50564e;font-size:.76rem;font-weight:700}
 .notice{margin-bottom:1rem;padding:.9rem 1rem;border:1px solid #dfd7bd;border-radius:12px;background:#fffaf0;color:#625a43;display:flex;align-items:center;justify-content:space-between;gap:1rem}
 .notice button{flex-shrink:0}
+
+.portal-tools{display:grid;grid-template-columns:minmax(0,1fr) minmax(180px,260px);gap:.85rem;align-items:end;margin:0 0 .6rem}
+.portal-tools label{margin:0}
+.portal-tools input,.portal-tools select{min-height:44px}
+.results-count{margin:0 0 1rem;color:#747970;font-size:.82rem}
+@media(max-width:640px){.portal-tools{grid-template-columns:1fr}}
