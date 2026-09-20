@@ -1,8 +1,14 @@
-const DB_KEY = 'db/information-portal.json';
+const LEGACY_DB_KEY = 'db/information-portal.json';
+const STORE_KEYS = {
+  users: 'db/users.json',
+  articles: 'db/articles.json',
+  categories: 'db/article-categories.json',
+  settings: 'db/settings.json',
+};
 const SESSION_COOKIE = 'portal_session';
 const SESSION_TTL_SECONDS = 12 * 60 * 60;
 const PBKDF2_ITERATIONS = 210000;
-const SCHEMA_VERSION = 2;
+const STORE_SCHEMA_VERSION = 1;
 const ROLES = new Set(['administrator', 'editor', 'reader']);
 const ARTICLE_STATUSES = new Set(['draft', 'published']);
 const encoder = new TextEncoder();
@@ -19,7 +25,6 @@ export class ApiError extends Error {
 
 export async function handleApiRequest(request, env) {
   const requestId = crypto.randomUUID();
-
   try {
     validateEnvironment(env);
     const url = new URL(request.url);
@@ -27,7 +32,6 @@ export async function handleApiRequest(request, env) {
     const parts = url.pathname.replace(/^\/api\/?/, '').split('/').filter(Boolean);
 
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) assertSameOrigin(request, url);
-
     if (method === 'OPTIONS') return new Response(null, { status: 204 });
     if (method === 'GET' && parts[0] === 'bootstrap' && parts.length === 1) return await bootstrap(request, env);
     if (method === 'POST' && parts[0] === 'setup' && parts.length === 1) return await setup(request, env);
@@ -88,15 +92,18 @@ function assertSameOrigin(request, url) {
 }
 
 async function bootstrap(request, env) {
-  const { db } = await readDatabase(env);
+  const [{ data: usersStore }, { data: settings }] = await Promise.all([
+    readStore(env, 'users'),
+    readStore(env, 'settings'),
+  ]);
   const session = await readSession(request, env).catch(() => null);
-  const user = session ? userFromSession(db, session) : null;
+  const user = session ? userFromSession(usersStore.users, session) : null;
   return json({
-    setupRequired: adminCount(db) === 0,
+    setupRequired: adminCount(usersStore.users) === 0,
     setupTokenRequired: Boolean(env.BOOTSTRAP_TOKEN),
-    mode: db.settings.mode,
+    mode: settings.mode,
     user: user ? publicUser(user) : null,
-    adminCount: adminCount(db),
+    adminCount: adminCount(usersStore.users),
   });
 }
 
@@ -108,10 +115,10 @@ async function setup(request, env) {
     throw new ApiError(403, 'Invalid setup token', 'INVALID_SETUP_TOKEN');
   }
 
-  const user = await mutateDatabase(env, async (db) => {
-    if (adminCount(db) !== 0) throw new ApiError(409, 'Initial setup has already been completed', 'SETUP_COMPLETE');
+  const user = await mutateStore(env, 'users', async (store) => {
+    if (adminCount(store.users) !== 0) throw new ApiError(409, 'Initial setup has already been completed', 'SETUP_COMPLETE');
     const now = new Date().toISOString();
-    const newUser = {
+    const created = {
       id: crypto.randomUUID(),
       email,
       role: 'administrator',
@@ -120,8 +127,8 @@ async function setup(request, env) {
       createdAt: now,
       updatedAt: now,
     };
-    db.users.push(newUser);
-    return newUser;
+    store.users.push(created);
+    return created;
   });
 
   const sessionToken = await createSessionToken(user, env);
@@ -132,57 +139,58 @@ async function login(request, env) {
   const input = await jsonBody(request);
   const email = normalizeEmail(input.email);
   const password = String(input.password ?? '');
-  const { db } = await readDatabase(env);
-  const user = db.users.find((item) => item.email === email);
-
+  const { data: usersStore } = await readStore(env, 'users');
+  const user = usersStore.users.find((item) => item.email === email);
   if (!user || !(await verifyPassword(password, user.password))) {
     throw new ApiError(401, 'Invalid email or password', 'INVALID_CREDENTIALS');
   }
-
   const sessionToken = await createSessionToken(user, env);
   return json({ user: publicUser(user) }, 200, { 'Set-Cookie': sessionCookie(request, sessionToken) });
 }
 
 async function listArticles(request, env, manage) {
-  const { db } = await readDatabase(env);
-  const session = await readSession(request, env).catch(() => null);
-  const user = session ? userFromSession(db, session) : null;
-  if (manage) requireRole(user, ['administrator', 'editor']);
-  else if (db.settings.mode === 'private' && !user) throw new ApiError(401, 'Authentication required', 'AUTH_REQUIRED');
-  const articles = manage ? db.articles : db.articles.filter((article) => article.status === 'published');
-  return json({ articles: [...articles].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)) });
+  if (manage) {
+    await authenticate(request, env, ['administrator', 'editor']);
+    const { data: articleStore } = await readStore(env, 'articles');
+    return json({ articles: sortArticles(articleStore.articles) });
+  }
+
+  const { data: settings } = await readStore(env, 'settings');
+  if (settings.mode === 'private') await authenticate(request, env, ['administrator', 'editor', 'reader']);
+  const { data: articleStore } = await readStore(env, 'articles');
+  return json({ articles: sortArticles(articleStore.articles.filter((article) => article.status === 'published')) });
 }
 
 async function getArticle(request, env, id) {
   assertUuid(id);
-  const { db } = await readDatabase(env);
-  const session = await readSession(request, env).catch(() => null);
-  const user = session ? userFromSession(db, session) : null;
-  const article = db.articles.find((item) => item.id === id);
+  const { data: articleStore } = await readStore(env, 'articles');
+  const article = articleStore.articles.find((item) => item.id === id);
   if (!article) throw new ApiError(404, 'Article not found', 'ARTICLE_NOT_FOUND');
-  if (article.status === 'draft') requireRole(user, ['administrator', 'editor']);
-  else if (db.settings.mode === 'private' && !user) throw new ApiError(401, 'Authentication required', 'AUTH_REQUIRED');
+
+  if (article.status === 'draft') {
+    await authenticate(request, env, ['administrator', 'editor']);
+  } else {
+    const { data: settings } = await readStore(env, 'settings');
+    if (settings.mode === 'private') await authenticate(request, env, ['administrator', 'editor', 'reader']);
+  }
   return json({ article });
 }
 
 async function saveArticle(request, env, id = null) {
   if (id) assertUuid(id);
-  const session = await requireSession(request, env);
+  const { user } = await authenticate(request, env, ['administrator', 'editor']);
   const body = await jsonBody(request);
+  const { data: categoryStore } = await readStore(env, 'categories');
+  const input = validateArticle(body, categoryStore.categories);
 
-  const article = await mutateDatabase(env, (db) => {
-    const user = userFromSession(db, session);
-    requireRole(user, ['administrator', 'editor']);
-    const input = validateArticle(body, db);
+  const article = await mutateStore(env, 'articles', (store) => {
     const now = new Date().toISOString();
-
     if (id) {
-      const existing = db.articles.find((item) => item.id === id);
+      const existing = store.articles.find((item) => item.id === id);
       if (!existing) throw new ApiError(404, 'Article not found', 'ARTICLE_NOT_FOUND');
       Object.assign(existing, input, { updatedAt: now, updatedById: user.id });
       return existing;
     }
-
     const created = {
       id: crypto.randomUUID(),
       ...input,
@@ -191,7 +199,7 @@ async function saveArticle(request, env, id = null) {
       createdAt: now,
       updatedAt: now,
     };
-    db.articles.push(created);
+    store.articles.push(created);
     return created;
   });
 
@@ -200,47 +208,46 @@ async function saveArticle(request, env, id = null) {
 
 async function deleteArticle(request, env, id) {
   assertUuid(id);
-  const session = await requireSession(request, env);
-  await mutateDatabase(env, (db) => {
-    requireRole(userFromSession(db, session), ['administrator', 'editor']);
-    const index = db.articles.findIndex((item) => item.id === id);
+  await authenticate(request, env, ['administrator', 'editor']);
+  await mutateStore(env, 'articles', (store) => {
+    const index = store.articles.findIndex((item) => item.id === id);
     if (index < 0) throw new ApiError(404, 'Article not found', 'ARTICLE_NOT_FOUND');
-    db.articles.splice(index, 1);
+    store.articles.splice(index, 1);
   });
   return json({ ok: true });
 }
 
 async function listCategories(request, env, manage) {
-  const { db } = await readDatabase(env);
-  const session = await readSession(request, env).catch(() => null);
-  const user = session ? userFromSession(db, session) : null;
-  if (manage) requireRole(user, ['administrator', 'editor']);
-  else if (db.settings.mode === 'private' && !user) throw new ApiError(401, 'Authentication required', 'AUTH_REQUIRED');
-  return json({ categories: [...db.categories].sort((a, b) => a.name.localeCompare(b.name)) });
+  if (manage) {
+    await authenticate(request, env, ['administrator', 'editor']);
+    const { data: categoryStore } = await readStore(env, 'categories');
+    return json({ categories: sortCategories(categoryStore.categories) });
+  }
+
+  const { data: settings } = await readStore(env, 'settings');
+  if (settings.mode === 'private') await authenticate(request, env, ['administrator', 'editor', 'reader']);
+  const { data: categoryStore } = await readStore(env, 'categories');
+  return json({ categories: sortCategories(categoryStore.categories) });
 }
 
 async function saveCategory(request, env, id = null) {
   if (id) assertUuid(id);
-  const session = await requireSession(request, env);
+  const { user } = await authenticate(request, env, ['administrator', 'editor']);
   const input = validateCategory(await jsonBody(request));
 
-  const category = await mutateDatabase(env, (db) => {
-    const user = userFromSession(db, session);
-    requireRole(user, ['administrator', 'editor']);
-    if (db.categories.some((item) => item.name.toLocaleLowerCase() === input.name.toLocaleLowerCase() && item.id !== id)) {
+  const category = await mutateStore(env, 'categories', (store) => {
+    if (store.categories.some((item) => item.name.toLocaleLowerCase() === input.name.toLocaleLowerCase() && item.id !== id)) {
       throw new ApiError(409, 'Category name is already in use', 'CATEGORY_NAME_IN_USE');
     }
     const now = new Date().toISOString();
-
     if (id) {
-      const existing = db.categories.find((item) => item.id === id);
+      const existing = store.categories.find((item) => item.id === id);
       if (!existing) throw new ApiError(404, 'Category not found', 'CATEGORY_NOT_FOUND');
       existing.name = input.name;
       existing.updatedAt = now;
       existing.updatedById = user.id;
       return existing;
     }
-
     const created = {
       id: crypto.randomUUID(),
       name: input.name,
@@ -249,7 +256,7 @@ async function saveCategory(request, env, id = null) {
       createdAt: now,
       updatedAt: now,
     };
-    db.categories.push(created);
+    store.categories.push(created);
     return created;
   });
 
@@ -258,46 +265,45 @@ async function saveCategory(request, env, id = null) {
 
 async function deleteCategory(request, env, id) {
   assertUuid(id);
-  const session = await requireSession(request, env);
-  await mutateDatabase(env, (db) => {
-    requireRole(userFromSession(db, session), ['administrator', 'editor']);
-    const index = db.categories.findIndex((item) => item.id === id);
+  await authenticate(request, env, ['administrator', 'editor']);
+  const { data: articleStore } = await readStore(env, 'articles');
+  if (articleStore.articles.some((article) => article.categoryId === id)) {
+    throw new ApiError(409, 'Category is used by one or more articles', 'CATEGORY_IN_USE');
+  }
+  await mutateStore(env, 'categories', (store) => {
+    const index = store.categories.findIndex((item) => item.id === id);
     if (index < 0) throw new ApiError(404, 'Category not found', 'CATEGORY_NOT_FOUND');
-    if (db.articles.some((article) => article.categoryId === id)) {
-      throw new ApiError(409, 'Category is used by one or more articles', 'CATEGORY_IN_USE');
-    }
-    db.categories.splice(index, 1);
+    store.categories.splice(index, 1);
   });
   return json({ ok: true });
 }
 
 async function listUsers(request, env) {
-  const session = await requireSession(request, env);
-  const { db } = await readDatabase(env);
-  requireRole(userFromSession(db, session), ['administrator']);
-  return json({ users: db.users.map(publicUser).sort((a, b) => a.email.localeCompare(b.email)) });
+  const { usersStore } = await authenticate(request, env, ['administrator']);
+  return json({ users: usersStore.users.map(publicUser).sort((a, b) => a.email.localeCompare(b.email)) });
 }
 
 async function saveUser(request, env, id = null) {
   if (id) assertUuid(id);
-  const session = await requireSession(request, env);
+  const { session } = await authenticate(request, env, ['administrator']);
   const input = await jsonBody(request);
   const email = normalizeEmail(input.email);
   const role = validateRole(input.role);
   const password = input.password ? validatePassword(input.password) : null;
   if (!id && !password) throw new ApiError(400, 'Password is required', 'PASSWORD_REQUIRED');
 
-  const user = await mutateDatabase(env, async (db) => {
-    requireRole(userFromSession(db, session), ['administrator']);
-    if (db.users.some((item) => item.email === email && item.id !== id)) {
+  const user = await mutateStore(env, 'users', async (store) => {
+    const actor = userFromSession(store.users, session);
+    requireRole(actor, ['administrator']);
+    if (store.users.some((item) => item.email === email && item.id !== id)) {
       throw new ApiError(409, 'Email is already in use', 'EMAIL_IN_USE');
     }
     const now = new Date().toISOString();
 
     if (id) {
-      const existing = db.users.find((item) => item.id === id);
+      const existing = store.users.find((item) => item.id === id);
       if (!existing) throw new ApiError(404, 'User not found', 'USER_NOT_FOUND');
-      if (existing.role === 'administrator' && role !== 'administrator' && adminCount(db) <= 1) {
+      if (existing.role === 'administrator' && role !== 'administrator' && adminCount(store.users) <= 1) {
         throw new ApiError(409, 'The system must always have at least one administrator', 'LAST_ADMIN_REQUIRED');
       }
       existing.email = email;
@@ -319,7 +325,7 @@ async function saveUser(request, env, id = null) {
       createdAt: now,
       updatedAt: now,
     };
-    db.users.push(created);
+    store.users.push(created);
     return created;
   });
 
@@ -328,148 +334,195 @@ async function saveUser(request, env, id = null) {
 
 async function deleteUser(request, env, id) {
   assertUuid(id);
-  const session = await requireSession(request, env);
-  await mutateDatabase(env, (db) => {
-    requireRole(userFromSession(db, session), ['administrator']);
-    const index = db.users.findIndex((item) => item.id === id);
+  const { session } = await authenticate(request, env, ['administrator']);
+  await mutateStore(env, 'users', (store) => {
+    const actor = userFromSession(store.users, session);
+    requireRole(actor, ['administrator']);
+    const index = store.users.findIndex((item) => item.id === id);
     if (index < 0) throw new ApiError(404, 'User not found', 'USER_NOT_FOUND');
-    if (db.users[index].role === 'administrator' && adminCount(db) <= 1) {
+    if (store.users[index].role === 'administrator' && adminCount(store.users) <= 1) {
       throw new ApiError(409, 'The system must always have at least one administrator', 'LAST_ADMIN_REQUIRED');
     }
-    db.users.splice(index, 1);
+    store.users.splice(index, 1);
   });
   return json({ ok: true }, 200, session.uid === id ? { 'Set-Cookie': expiredSessionCookie(request) } : {});
 }
 
 async function updateSettings(request, env) {
-  const session = await requireSession(request, env);
+  const { user } = await authenticate(request, env, ['administrator']);
   const input = await jsonBody(request);
   if (!['private', 'public'].includes(input.mode)) throw new ApiError(400, 'Mode must be private or public', 'INVALID_MODE');
   const password = String(input.password ?? '');
   if (!password) throw new ApiError(400, 'Administrator password is required', 'PASSWORD_REQUIRED');
+  if (!(await verifyPassword(password, user.password))) {
+    throw new ApiError(401, 'Incorrect administrator password', 'INVALID_CREDENTIALS');
+  }
 
-  await mutateDatabase(env, async (db) => {
-    const user = userFromSession(db, session);
-    requireRole(user, ['administrator']);
-    if (!(await verifyPassword(password, user.password))) {
-      throw new ApiError(401, 'Incorrect administrator password', 'INVALID_CREDENTIALS');
-    }
-    if (db.settings.mode === input.mode) throw new ApiError(409, `Portal is already ${input.mode}`, 'MODE_UNCHANGED');
-    db.settings.mode = input.mode;
-    db.settings.updatedAt = new Date().toISOString();
-    db.settings.updatedById = user.id;
+  await mutateStore(env, 'settings', (settings) => {
+    if (settings.mode === input.mode) throw new ApiError(409, `Portal is already ${input.mode}`, 'MODE_UNCHANGED');
+    settings.mode = input.mode;
+    settings.updatedAt = new Date().toISOString();
+    settings.updatedById = user.id;
   });
-
   return json({ ok: true, mode: input.mode });
 }
 
-function createDatabase() {
+async function authenticate(request, env, allowedRoles) {
+  const session = await requireSession(request, env);
+  const { data: usersStore } = await readStore(env, 'users');
+  const user = userFromSession(usersStore.users, session);
+  requireRole(user, allowedRoles);
+  return { session, user, usersStore };
+}
+
+function createStore(name) {
   const now = new Date().toISOString();
-  return {
-    id: crypto.randomUUID(),
-    schemaVersion: SCHEMA_VERSION,
-    settings: { id: crypto.randomUUID(), mode: 'private', updatedAt: now, updatedById: null },
-    users: [],
-    categories: [],
-    articles: [],
-    createdAt: now,
-    updatedAt: now,
-  };
+  if (name === 'users') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, users: [], createdAt: now, updatedAt: now };
+  if (name === 'articles') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, articles: [], createdAt: now, updatedAt: now };
+  if (name === 'categories') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, categories: [], createdAt: now, updatedAt: now };
+  if (name === 'settings') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, mode: 'private', updatedAt: now, updatedById: null };
+  throw new Error('Unknown store');
 }
 
-function migrateDatabase(raw) {
-  if (!raw || typeof raw !== 'object') throw new ApiError(500, 'Portal data is invalid', 'INVALID_DATABASE');
-  const db = structuredClone(raw);
-  if (db.schemaVersion === 1) {
-    db.categories = [];
-    db.articles = Array.isArray(db.articles)
-      ? db.articles.map((article) => ({ ...article, categoryId: article.categoryId ?? null }))
-      : db.articles;
-    db.schemaVersion = 2;
+function storeFromLegacy(name, legacy) {
+  if (!legacy || typeof legacy !== 'object') return createStore(name);
+  const now = new Date().toISOString();
+  const createdAt = legacy.createdAt || now;
+
+  if (name === 'users') {
+    return {
+      id: crypto.randomUUID(),
+      schemaVersion: 1,
+      users: Array.isArray(legacy.users) ? structuredClone(legacy.users) : [],
+      createdAt,
+      updatedAt: legacy.updatedAt || now,
+    };
   }
-  return db;
+
+  if (name === 'articles') {
+    const articles = Array.isArray(legacy.articles)
+      ? legacy.articles.map((article) => ({ ...structuredClone(article), categoryId: article.categoryId ?? null }))
+      : [];
+    return { id: crypto.randomUUID(), schemaVersion: 1, articles, createdAt, updatedAt: legacy.updatedAt || now };
+  }
+
+  if (name === 'categories') {
+    return {
+      id: crypto.randomUUID(),
+      schemaVersion: 1,
+      categories: Array.isArray(legacy.categories) ? structuredClone(legacy.categories) : [],
+      createdAt,
+      updatedAt: legacy.updatedAt || now,
+    };
+  }
+
+  if (name === 'settings') {
+    return {
+      id: isUuid(legacy.settings?.id) ? legacy.settings.id : crypto.randomUUID(),
+      schemaVersion: 1,
+      mode: ['private', 'public'].includes(legacy.settings?.mode) ? legacy.settings.mode : 'private',
+      updatedAt: legacy.settings?.updatedAt || legacy.updatedAt || now,
+      updatedById: legacy.settings?.updatedById ?? null,
+    };
+  }
+
+  throw new Error('Unknown store');
 }
 
-async function readDatabase(env) {
+async function readStore(env, name) {
+  const key = STORE_KEYS[name];
   try {
-    const object = await env.PORTAL_DATA.get(DB_KEY);
-    if (!object) return { db: createDatabase(), etag: null };
-    const db = migrateDatabase(await object.json());
-    validateDatabase(db);
-    return { db, etag: object.etag };
-  } catch (error) {
-    if (error instanceof ApiError) throw error;
-    console.error('R2 database read failed', error?.stack || error);
-    throw new ApiError(500, 'Portal data could not be read', 'STORAGE_READ_FAILED');
-  }
-}
-
-async function mutateDatabase(env, mutator) {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    let object;
-    let db;
-    try {
-      object = await env.PORTAL_DATA.get(DB_KEY);
-      db = object ? migrateDatabase(await object.json()) : createDatabase();
-      validateDatabase(db);
-    } catch (error) {
-      if (error instanceof ApiError) throw error;
-      console.error('R2 database read failed during mutation', error?.stack || error);
-      throw new ApiError(500, 'Portal data could not be read', 'STORAGE_READ_FAILED');
+    let object = await env.PORTAL_DATA.get(key);
+    if (object) {
+      const data = await object.json();
+      validateStore(name, data);
+      return { data, etag: object.etag };
     }
 
-    const result = await mutator(db);
-    db.updatedAt = new Date().toISOString();
-    const onlyIf = object ? { etagMatches: object.etag } : new Headers({ 'If-None-Match': '*' });
+    const legacyObject = await env.PORTAL_DATA.get(LEGACY_DB_KEY);
+    const data = legacyObject ? storeFromLegacy(name, await legacyObject.json()) : createStore(name);
+    validateStore(name, data);
+
+    const created = await env.PORTAL_DATA.put(key, JSON.stringify(data), {
+      onlyIf: new Headers({ 'If-None-Match': '*' }),
+      httpMetadata: { contentType: 'application/json; charset=utf-8' },
+    });
+
+    if (created) return { data, etag: created.etag };
+
+    object = await env.PORTAL_DATA.get(key);
+    if (!object) throw new Error('Store creation race could not be resolved');
+    const winner = await object.json();
+    validateStore(name, winner);
+    return { data: winner, etag: object.etag };
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    console.error(`R2 ${name} store read failed`, error?.stack || error);
+    throw new ApiError(500, `Portal ${name} data could not be read`, 'STORAGE_READ_FAILED');
+  }
+}
+
+async function mutateStore(env, name, mutator) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const { data, etag } = await readStore(env, name);
+    const result = await mutator(data);
+    if ('updatedAt' in data) data.updatedAt = new Date().toISOString();
 
     try {
-      const written = await env.PORTAL_DATA.put(DB_KEY, JSON.stringify(db), {
-        onlyIf,
+      const written = await env.PORTAL_DATA.put(STORE_KEYS[name], JSON.stringify(data), {
+        onlyIf: { etagMatches: etag },
         httpMetadata: { contentType: 'application/json; charset=utf-8' },
       });
       if (written) return result;
     } catch (error) {
-      console.error('R2 database write failed', error?.stack || error);
-      throw new ApiError(500, 'Portal data could not be saved', 'STORAGE_WRITE_FAILED');
+      console.error(`R2 ${name} store write failed`, error?.stack || error);
+      throw new ApiError(500, `Portal ${name} data could not be saved`, 'STORAGE_WRITE_FAILED');
     }
   }
   throw new ApiError(409, 'Data changed concurrently. Retry the operation.', 'WRITE_CONFLICT');
 }
 
-function validateDatabase(db) {
-  if (!db || db.schemaVersion !== SCHEMA_VERSION || !isUuid(db.id)) throw new ApiError(500, 'Portal data is invalid', 'INVALID_DATABASE');
-  if (!db.settings || !isUuid(db.settings.id) || !['private', 'public'].includes(db.settings.mode)) {
-    throw new ApiError(500, 'Portal settings data is invalid', 'INVALID_DATABASE');
-  }
-  if (!Array.isArray(db.users) || !Array.isArray(db.categories) || !Array.isArray(db.articles)) {
-    throw new ApiError(500, 'Portal collection data is invalid', 'INVALID_DATABASE');
+function validateStore(name, data) {
+  if (!data || data.schemaVersion !== STORE_SCHEMA_VERSION || !isUuid(data.id)) {
+    throw new ApiError(500, `Portal ${name} data is invalid`, 'INVALID_DATABASE');
   }
 
-  const categoryIds = new Set();
-  for (const user of db.users) {
-    if (!isUuid(user.id) || !isUuid(user.sessionNonce) || !ROLES.has(user.role) || typeof user.email !== 'string') {
-      throw new ApiError(500, 'Portal user data is invalid', 'INVALID_DATABASE');
+  if (name === 'users') {
+    if (!Array.isArray(data.users)) throw new ApiError(500, 'Portal users data is invalid', 'INVALID_DATABASE');
+    for (const user of data.users) {
+      if (!isUuid(user.id) || !isUuid(user.sessionNonce) || !ROLES.has(user.role) || typeof user.email !== 'string') {
+        throw new ApiError(500, 'Portal users data is invalid', 'INVALID_DATABASE');
+      }
     }
-  }
-  for (const category of db.categories) {
-    if (!isUuid(category.id) || typeof category.name !== 'string' || !isUuid(category.createdById) || !isUuid(category.updatedById)) {
-      throw new ApiError(500, 'Portal category data is invalid', 'INVALID_DATABASE');
+  } else if (name === 'articles') {
+    if (!Array.isArray(data.articles)) throw new ApiError(500, 'Portal articles data is invalid', 'INVALID_DATABASE');
+    for (const article of data.articles) {
+      const categoryValid = article.categoryId == null || isUuid(article.categoryId);
+      if (!isUuid(article.id) || !isUuid(article.authorId) || !isUuid(article.updatedById) ||
+          !ARTICLE_STATUSES.has(article.status) || !categoryValid) {
+        throw new ApiError(500, 'Portal articles data is invalid', 'INVALID_DATABASE');
+      }
     }
-    categoryIds.add(category.id);
-  }
-  for (const article of db.articles) {
-    const categoryValid = article.categoryId === null || article.categoryId === undefined ||
-      (isUuid(article.categoryId) && categoryIds.has(article.categoryId));
-    if (!isUuid(article.id) || !isUuid(article.authorId) || !isUuid(article.updatedById) ||
-        !ARTICLE_STATUSES.has(article.status) || !categoryValid) {
-      throw new ApiError(500, 'Portal article data is invalid', 'INVALID_DATABASE');
+  } else if (name === 'categories') {
+    if (!Array.isArray(data.categories)) throw new ApiError(500, 'Portal categories data is invalid', 'INVALID_DATABASE');
+    for (const category of data.categories) {
+      if (!isUuid(category.id) || typeof category.name !== 'string' || !isUuid(category.createdById) || !isUuid(category.updatedById)) {
+        throw new ApiError(500, 'Portal categories data is invalid', 'INVALID_DATABASE');
+      }
+    }
+  } else if (name === 'settings') {
+    if (!['private', 'public'].includes(data.mode)) throw new ApiError(500, 'Portal settings data is invalid', 'INVALID_DATABASE');
+    if (data.updatedById !== null && data.updatedById !== undefined && !isUuid(data.updatedById)) {
+      throw new ApiError(500, 'Portal settings data is invalid', 'INVALID_DATABASE');
     }
   }
 }
 
-function adminCount(db) { return db.users.filter((user) => user.role === 'administrator').length; }
-function userFromSession(db, session) {
-  const user = db.users.find((item) => item.id === session.uid);
+function sortArticles(articles) { return [...articles].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
+function sortCategories(categories) { return [...categories].sort((a, b) => a.name.localeCompare(b.name)); }
+function adminCount(users) { return users.filter((user) => user.role === 'administrator').length; }
+function userFromSession(users, session) {
+  const user = users.find((item) => item.id === session.uid);
   return user && user.sessionNonce === session.nonce ? user : null;
 }
 function requireRole(user, allowedRoles) {
@@ -598,7 +651,7 @@ function validateCategory(input) {
   }
   return { name };
 }
-function validateArticle(input, db) {
+function validateArticle(input, categories) {
   const title = String(input.title || '').trim();
   const summary = String(input.summary || '').trim();
   const content = String(input.content || '').trim();
@@ -608,7 +661,7 @@ function validateArticle(input, db) {
   if (summary.length > 600) throw new ApiError(400, 'Summary must be at most 600 characters', 'INVALID_SUMMARY');
   if (!content || content.length > 1_000_000) throw new ApiError(400, 'Article content is required and must be at most 1 MB', 'INVALID_CONTENT');
   if (!ARTICLE_STATUSES.has(status)) throw new ApiError(400, 'Invalid article status', 'INVALID_ARTICLE_STATUS');
-  if (!isUuid(categoryId) || !db.categories.some((category) => category.id === categoryId)) {
+  if (!isUuid(categoryId) || !categories.some((category) => category.id === categoryId)) {
     throw new ApiError(400, 'A valid article category is required', 'INVALID_CATEGORY');
   }
   return { title, summary, content, status, categoryId };
