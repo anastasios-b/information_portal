@@ -41,4 +41,12 @@ test('UI preserves required routes, search and controls', () => {
   assert.match(app, /className="skeleton"/);
   assert.match(app, /aria-busy=\{loading\}/);
   assert.doesNotMatch(app, />Loading…</);
+
+  assert.match(app, /path\.startsWith\('\/articles\/'\)/);
+  assert.match(app, /function ArticlePage/);
+  assert.match(app, /\/articles\/\$\{article\.id\}/);
+  assert.match(app, /className="article-read"/);
+  assert.match(app, /className="article-edit"/);
+  assert.match(app, /className="article-delete"/);
+  assert.doesNotMatch(app, /className="modal"/);
 });
