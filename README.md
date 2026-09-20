@@ -2,113 +2,141 @@
 
 Lean React information portal for small to medium-sized teams, deployed as one Cloudflare Worker with Static Assets and R2 storage.
 
-## Required behavior
+## Admin routes
 
-- The administration UI lives under `/admin`.
-- Initial setup is available only while no administrator exists. It creates the first administrator; there is no public registration afterward.
-- **Private mode:** anonymous visitors must sign in.
-- **Public mode:** anonymous visitors can read published articles. Changing visibility never deletes users or articles.
-- **Administrators:** manage visibility, users, and articles.
-- **Editors:** create/import, edit, publish/draft, and delete articles.
-- **Readers:** read published content only.
-- The final administrator cannot be deleted or demoted.
-- All persisted database records use UUIDs, never integer IDs.
+- `/admin` redirects to `/admin/articles`.
+- `/admin/articles`
+- `/admin/categories`
+- `/admin/users`
+- `/admin/settings`
+
+Navigation is URL-driven rather than tab-only state.
+
+## Behavior
+
+- Initial setup exists only while no administrator exists.
+- There is no public registration afterward.
+- Private mode requires login.
+- Public mode exposes published articles.
+- Switching public/private mode requires the logged-in administrator's current password.
+- The currently selected mode cannot be selected again.
+- Administrators manage users, categories, articles, and visibility.
+- Editors manage categories and articles.
+- Readers consume published content.
+- The last administrator cannot be deleted or demoted.
+- All persisted entity IDs are UUIDs.
+- "View portal" opens the public portal in a new tab.
+
+## Categories
+
+Categories are UUID-backed database records. Articles store a `categoryId`.
+
+API:
+
+```text
+GET    /api/categories
+GET    /api/categories?manage=1
+POST   /api/categories
+PUT    /api/categories/:uuid
+DELETE /api/categories/:uuid
+```
+
+Administrators and editors may manage categories. A category cannot be deleted while an article references it.
+
+## Database migration
+
+The JSON database is stored at:
+
+```text
+db/information-portal.json
+```
+
+Schema version 2 adds:
+
+```json
+{
+  "categories": [],
+  "articles": [
+    {
+      "categoryId": "UUID"
+    }
+  ]
+}
+```
+
+Existing schema-v1 users and articles are preserved. Existing articles migrate with `categoryId: null` and remain readable as "Uncategorized" until edited. The migrated schema is persisted on the next database mutation.
+
+## Authentication
+
+Passwords are stored as PBKDF2-SHA-256 records with:
+
+- per-user random salt
+- stored iteration count
+- derived hash
+- URL-safe Base64 encoding
+
+Verification uses the same derivation function as hashing and accepts both URL-safe Base64 and standard Base64 for compatibility with previously stored hashes.
+
+Changing a user's password rotates the session nonce and invalidates their old sessions.
 
 ## Architecture
 
-- **UI:** React 19 + Vite.
-- **Hosting:** Cloudflare Workers Static Assets.
-- **API:** native Worker routes under `/api/*`.
-- **Data:** one JSON database object in R2, bound as `PORTAL_DATA`.
-- **Database key:** `db/information-portal.json`.
-- **Concurrency:** R2 conditional writes against the current ETag retry on conflicts.
-- **Authentication:** signed HttpOnly session cookie.
-- **Passwords:** PBKDF2-SHA-256 with a per-user random salt.
-- **Observability:** Workers Logs enabled through `wrangler.jsonc`.
+- React + Vite frontend
+- Cloudflare Worker API
+- Workers Static Assets
+- Cloudflare R2 JSON storage
+- signed HttpOnly session cookie
+- R2 conditional writes for concurrent mutation safety
 
-The database root, settings record, user records, and article records all carry UUID identifiers.
+## Tests
 
-## Automated verification
+`npm run build` runs regression tests before Vite compilation.
 
-`npm run build` runs the Worker API regression suite before Vite builds the UI. The tests cover:
+The suite covers:
 
-- initial administrator setup and registration lockout
-- UUID-backed persistence
-- login
-- private/public visibility
-- administrator user management
-- final-administrator delete/demotion protection
-- editor article permissions
-- reader permissions
-- password-change session invalidation
-- clean JSON infrastructure errors
-- presence of the required UI features
+- initial setup
+- schema migration
+- UUID storage
+- password hashing/login compatibility
+- password-confirmed visibility switching
+- category CRUD
+- article/category integrity
+- article access and management
+- administrator/editor/reader permissions
+- final-admin protection
+- password change/session invalidation
+- infrastructure errors
+- required UI routes and controls
 
-Run them directly with:
+Run:
 
 ```bash
 npm test
 ```
 
-## Local development
+## Cloudflare deployment
 
-```bash
-npm install
-cp .env.example .dev.vars
-```
-
-Set `SESSION_SECRET` to a random value of at least 32 characters. `BOOTSTRAP_TOKEN` is optional.
-
-Build and run the complete Worker locally:
-
-```bash
-npm run dev:worker
-```
-
-Wrangler provides local R2 persistence for development.
-
-## Cloudflare configuration
-
-Create the R2 bucket once:
+Create the bucket once:
 
 ```bash
 npx wrangler r2 bucket create information-portal-data
 ```
 
-Configure the Worker secret:
+Set the required secret:
 
 ```bash
 npx wrangler secret put SESSION_SECRET
 ```
 
-Optionally protect initial setup:
+Optional first-setup protection:
 
 ```bash
 npx wrangler secret put BOOTSTRAP_TOKEN
 ```
 
-For Git-connected Workers Builds use:
+Workers Builds:
 
 ```text
 Build command:  npm run build
 Deploy command: npx wrangler deploy
 ```
-
-The R2 binding is declared in `wrangler.jsonc`:
-
-```json
-{
-  "binding": "PORTAL_DATA",
-  "bucket_name": "information-portal-data"
-}
-```
-
-## Security notes
-
-- R2 is only accessible server-side through the Worker binding.
-- Session cookies are HttpOnly, SameSite=Lax, and Secure on HTTPS.
-- Mutating requests reject cross-origin browser requests.
-- Article bodies are rendered as text rather than raw HTML.
-- Password changes rotate the user's session nonce and invalidate existing sessions.
-- R2 write conflicts cannot silently bypass administrator-count invariants.
-- Add Cloudflare rate limiting/WAF controls for login/setup if the portal becomes Internet-facing at meaningful scale.
