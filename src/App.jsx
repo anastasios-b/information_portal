@@ -491,7 +491,8 @@ function Articles() {
         <Field label="Category">{loading ? <Skeleton height="41px" /> : <select required value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}><option value="">Select category</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select>}</Field>
         <Field label="Summary"><textarea rows="3" maxLength="600" value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} /></Field>
         <Field label="Content"><textarea ref={contentRef} rows="14" required value={form.content} onSelect={rememberInsertionRange} onKeyUp={rememberInsertionRange} onClick={rememberInsertionRange} onChange={(e) => setForm({ ...form, content: e.target.value })} /></Field>
-        <Field label="Add inline image">
+        <div className="image-field">
+          <span className="field-label">Add inline image</span>
           <div className="image-source-actions">
             <label className="image-upload-button">
               <span>Upload image</span>
@@ -499,7 +500,7 @@ function Articles() {
             </label>
             <button type="button" className="secondary" onClick={openMediaLibrary}>Media library</button>
           </div>
-        </Field>
+        </div>
         {imageBusy && <div className="image-upload-placeholder"><Skeleton width="100%" height="72px" /></div>}
         {inlineImages.length > 0 && <div className="inline-image-controls">
           {inlineImages.map((image) => <div className="inline-image-control" key={`${image.reference}-${image.start}`}>
