@@ -40,7 +40,7 @@ export default function App() {
   useEffect(() => { refresh(); }, []);
 
   if (error) return <Center><Card title="Portal unavailable" text={error} /></Center>;
-  if (!boot) return <Center>Loading…</Center>;
+  if (!boot) return <AppSkeleton />;
   if (boot.setupRequired) return <Setup boot={boot} refresh={refresh} />;
 
   if (path.startsWith('/admin')) {
@@ -132,16 +132,22 @@ function Home({ boot, refresh }) {
   const [query, setQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let active = true;
+    setLoading(true);
     const load = boot.mode === 'public' ? cachedPortalApi : api;
     Promise.all([load('/api/articles'), load('/api/categories')])
       .then(([articleData, categoryData]) => {
+        if (!active) return;
         setArticles(articleData.articles);
         setCategories(categoryData.categories);
         setError('');
       })
-      .catch((err) => setError(err.message));
+      .catch((err) => { if (active) setError(err.message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [boot.mode, boot.user?.id]);
 
   const categoryMap = useMemo(() => new Map(categories.map((category) => [category.id, category.name])), [categories]);
@@ -178,22 +184,24 @@ function Home({ boot, refresh }) {
     <main className="main">
       <section className="hero"><small>Team knowledge</small><h1>Information that stays easy to find.</h1><p>Published procedures, references, notes and updates in one lean portal.</p></section>
       {error && <ErrorBox text={error} />}
-      <section className="portal-tools" aria-label="Filter articles">
-        <label className="search-field"><span>Search</span><input type="search" placeholder="Search articles…" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
-        <label className="category-filter"><span>Category</span><select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option value="">All categories</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
-      </section>
-      <p className="results-count">{filteredArticles.length} {filteredArticles.length === 1 ? 'article' : 'articles'}</p>
-      <section className="grid">
-        {filteredArticles.map((article) => <article className="card article" key={article.id}>
+      {loading ? <PortalSkeleton /> : <>
+        <section className="portal-tools" aria-label="Filter articles">
+          <label className="search-field"><span>Search</span><input type="search" placeholder="Search articles…" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+          <label className="category-filter"><span>Category</span><select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option value="">All categories</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
+        </section>
+        <p className="results-count">{filteredArticles.length} {filteredArticles.length === 1 ? 'article' : 'articles'}</p>
+        <section className="grid">
+          {filteredArticles.map((article) => <article className="card article" key={article.id}>
           <div>
             <div className="article-meta"><span className="tag">{categoryMap.get(article.categoryId) || 'Uncategorized'}</span><small>{new Date(article.updatedAt).toLocaleString()}</small></div>
             <h2>{article.title}</h2><p>{article.summary || article.content.slice(0, 160)}</p>
           </div>
           <button className="link" onClick={() => setOpen(article)}>Read article →</button>
-        </article>)}
-      </section>
-      {!articles.length && !error && <div className="empty">No published articles yet.</div>}
-      {Boolean(articles.length) && !filteredArticles.length && !error && <div className="empty">No matching articles.</div>}
+          </article>)}
+        </section>
+        {!articles.length && !error && <div className="empty">No published articles yet.</div>}
+        {Boolean(articles.length) && !filteredArticles.length && !error && <div className="empty">No matching articles.</div>}
+      </>}
     </main>
 
     {open && <div className="overlay" onMouseDown={() => setOpen()}>
@@ -262,12 +270,15 @@ function Articles() {
   const [id, setId] = useState();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   const load = async () => {
+    setLoading(true);
     try {
       const [articleData, categoryData] = await Promise.all([api('/api/articles?manage=1'), api('/api/categories?manage=1')]);
       setItems(articleData.articles); setCategories(categoryData.categories); setError('');
     } catch (err) { setError(err.message); }
+    finally { setLoading(false); }
   };
 
   useEffect(() => { load(); }, []);
@@ -305,7 +316,7 @@ function Articles() {
 
   return <section>
     <Head title="Articles" text="Administrators and editors can create, import, edit and delete articles." />
-    {!categories.length && <div className="notice">Create at least one category before creating an article.<button className="secondary" onClick={() => navigate('/admin/categories')}>Manage categories</button></div>}
+    {!loading && !categories.length && <div className="notice">Create at least one category before creating an article.<button className="secondary" onClick={() => navigate('/admin/categories')}>Manage categories</button></div>}
     <div className="cols">
       <form className="card form" onSubmit={save}>
         <h2>{id ? 'Edit article' : 'New article'}</h2>
@@ -320,8 +331,8 @@ function Articles() {
         {id && <button type="button" className="secondary" onClick={reset}>Cancel</button>}
       </form>
 
-      <div className="card"><h2>Existing articles</h2><div className="records">
-        {items.map((article) => <div className="record" key={article.id}>
+      <div className="card"><h2>Existing articles</h2><div className="records" aria-busy={loading}>
+        {loading ? <RecordSkeleton count={4} /> : items.map((article) => <div className="record" key={article.id}>
           <div><b>{article.title}</b><small>{categoryMap.get(article.categoryId) || 'Uncategorized'} · {article.status} · {article.id}</small></div>
           <div><button className="secondary" onClick={() => edit(article)}>Edit</button><button className="danger" onClick={() => remove(article)}>Delete</button></div>
         </div>)}
@@ -336,10 +347,13 @@ function Categories() {
   const [id, setId] = useState();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   const load = async () => {
+    setLoading(true);
     try { const data = await api('/api/categories?manage=1'); setItems(data.categories); setError(''); }
     catch (err) { setError(err.message); }
+    finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
 
@@ -371,12 +385,12 @@ function Categories() {
         <button disabled={busy}>{busy ? 'Saving…' : id ? 'Save category' : 'Create category'}</button>
         {id && <button type="button" className="secondary" onClick={reset}>Cancel</button>}
       </form>
-      <div className="card"><h2>Article categories</h2><div className="records">
-        {items.map((category) => <div className="record" key={category.id}>
+      <div className="card"><h2>Article categories</h2><div className="records" aria-busy={loading}>
+        {loading ? <RecordSkeleton count={4} /> : items.map((category) => <div className="record" key={category.id}>
           <div><b>{category.name}</b><small>{category.id}</small></div>
           <div><button className="secondary" onClick={() => edit(category)}>Edit</button><button className="danger" onClick={() => remove(category)}>Delete</button></div>
         </div>)}
-      </div>{!items.length && <p className="hint">No categories yet.</p>}</div>
+      </div>{!loading && !items.length && <p className="hint">No categories yet.</p>}</div>
     </div>
   </section>;
 }
@@ -388,10 +402,13 @@ function Users({ boot, refresh }) {
   const [id, setId] = useState();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   const load = async () => {
+    setLoading(true);
     try { const data = await api('/api/admin/users'); setItems(data.users); setError(''); }
     catch (err) { setError(err.message); }
+    finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
 
@@ -434,8 +451,8 @@ function Users({ boot, refresh }) {
         {id && <button type="button" className="secondary" onClick={reset}>Cancel</button>}
       </form>
 
-      <div className="card"><h2>Accounts</h2><div className="records">
-        {items.map((user) => {
+      <div className="card"><h2>Accounts</h2><div className="records" aria-busy={loading}>
+        {loading ? <RecordSkeleton count={4} /> : items.map((user) => {
           const protectedAdmin = user.id === boot.user.id && user.role === 'administrator' && adminCount === 1;
           return <div className="record" key={user.id}>
             <div><b>{user.email}</b><small>{user.role} · {user.id}</small></div>
@@ -475,6 +492,43 @@ function Settings({ boot, refresh }) {
       {error && <ErrorBox text={error} />}
     </div>
   </section>;
+}
+
+function AppSkeleton() {
+  return <div className="app-skeleton" aria-hidden="true">
+    <header className="top"><Skeleton width="150px" height="18px" /><div><Skeleton width="78px" height="30px" /><Skeleton width="92px" height="38px" /></div></header>
+    <main className="main">
+      <section className="hero"><Skeleton width="95px" height="12px" /><Skeleton width="min(560px, 90%)" height="54px" /><Skeleton width="min(650px, 95%)" height="18px" /></section>
+      <PortalSkeleton />
+    </main>
+  </div>;
+}
+
+function PortalSkeleton() {
+  return <div className="skeleton-section" aria-hidden="true">
+    <div className="portal-tools">
+      <div><Skeleton width="55px" height="12px" /><Skeleton width="100%" height="44px" /></div>
+      <div><Skeleton width="65px" height="12px" /><Skeleton width="100%" height="44px" /></div>
+    </div>
+    <Skeleton width="72px" height="12px" />
+    <div className="grid skeleton-grid">
+      {Array.from({ length: 6 }, (_, index) => <article className="card article skeleton-card" key={index}>
+        <div><Skeleton width="90px" height="20px" /><Skeleton width="72%" height="25px" /><Skeleton width="100%" height="14px" /><Skeleton width="86%" height="14px" /></div>
+        <Skeleton width="105px" height="14px" />
+      </article>)}
+    </div>
+  </div>;
+}
+
+function RecordSkeleton({ count = 4 }) {
+  return <>{Array.from({ length: count }, (_, index) => <div className="record skeleton-record" key={index} aria-hidden="true">
+    <div><Skeleton width={index % 2 ? '58%' : '72%'} height="16px" /><Skeleton width="88%" height="11px" /></div>
+    <div><Skeleton width="62px" height="34px" /><Skeleton width="68px" height="34px" /></div>
+  </div>)}</>;
+}
+
+function Skeleton({ width = '100%', height = '16px' }) {
+  return <span className="skeleton" style={{ width, height }} />;
 }
 
 function NewTabIcon() {
