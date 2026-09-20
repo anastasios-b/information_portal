@@ -59,3 +59,20 @@
 .inline-article-image{max-width:100%;margin:1.7rem auto}
 .inline-article-image img{display:block;width:100%;height:auto;border-radius:14px;border:1px solid #dedfd8}
 @media(max-width:700px){.inline-image-control{grid-template-columns:64px minmax(0,1fr)}.inline-image-control>img{width:64px;height:64px}.inline-image-control label,.inline-image-control button{grid-column:1/-1}}
+
+.image-field{display:grid;gap:.4rem}
+.field-label{font-size:.85rem;font-weight:650}
+.image-source-actions{display:grid;grid-template-columns:1fr 1fr;gap:.65rem}
+.image-upload-button{min-height:39px;display:flex;align-items:center;justify-content:center;border:1px solid #20241f;border-radius:9px;padding:.58rem .85rem;background:#20241f;color:#fff;font-weight:700;cursor:pointer}
+.image-upload-button input{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;clip-path:inset(50%)}
+.media-library-overlay{position:fixed;inset:0;z-index:30;display:grid;place-items:center;padding:1rem;background:rgba(20,22,19,.56)}
+.media-library-modal{width:min(960px,96vw);max-height:88vh;overflow:auto;border:1px solid #dedfd8;border-radius:18px;background:#fff;padding:1.25rem;box-shadow:0 24px 80px rgba(20,22,19,.18)}
+.media-library-header{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:1rem}
+.media-library-header h2{margin:.25rem 0 0}
+.media-library-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:.8rem}
+.media-library-item{min-width:0;display:grid;gap:.55rem;text-align:left;padding:.55rem;border:1px solid #dedfd8;background:#fafaf7;color:#30352f}
+.media-library-item:hover{border-color:#8c9488;background:#f2f4ef}
+.media-library-item img{display:block;width:100%;height:120px;object-fit:cover;border-radius:7px;background:#ecece6}
+.media-library-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.78rem}
+.skeleton-media-item{pointer-events:none}
+@media(max-width:700px){.image-source-actions{grid-template-columns:1fr}.media-library-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.media-library-item img{height:100px}}
