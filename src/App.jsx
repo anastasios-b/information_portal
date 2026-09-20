@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { api, cachedPortalApi, clearPortalCache } from './api.js';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { api, articleImageUrl, cachedPortalApi, clearPortalCache, uploadArticleImage } from './api.js';
 
 const ADMIN_ROUTES = ['/admin/articles', '/admin/categories', '/admin/users', '/admin/settings'];
 
@@ -157,7 +157,7 @@ function Home({ boot, refresh }) {
       if (categoryFilter && article.categoryId !== categoryFilter) return false;
       if (!needle) return true;
       const category = categoryMap.get(article.categoryId) || 'Uncategorized';
-      return [article.title, article.summary, article.content, category]
+      return [article.title, article.summary, articlePlainText(article.content), category]
         .some((value) => String(value || '').toLocaleLowerCase().includes(needle));
     });
   }, [articles, categoryFilter, categoryMap, query]);
@@ -194,7 +194,7 @@ function Home({ boot, refresh }) {
           {filteredArticles.map((article) => <article className="card article" key={article.id}>
           <div>
             <div className="article-meta"><span className="tag">{categoryMap.get(article.categoryId) || 'Uncategorized'}</span><small>{new Date(article.updatedAt).toLocaleString()}</small></div>
-            <h2>{article.title}</h2><p>{article.summary || article.content.slice(0, 160)}</p>
+            <h2>{article.title}</h2><p>{article.summary || articlePlainText(article.content).slice(0, 160)}</p>
           </div>
           <button className="article-read" onClick={() => navigate(`/articles/${article.id}`)}>Read article →</button>
           </article>)}
@@ -270,7 +270,7 @@ function ArticlePage({ path, boot, refresh }) {
           </div>
           <h1>{article.title}</h1>
           {article.summary && <p className="article-summary">{article.summary}</p>}
-          <div className="article-body">{article.content}</div>
+          <div className="article-body">{renderArticleContent(article.content)}</div>
         </article>
       </> : null}
     </main>
@@ -334,6 +334,8 @@ function Articles() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [imageBusy, setImageBusy] = useState(false);
+  const contentRef = useRef(null);
 
   const load = async () => {
     setLoading(true);
@@ -346,6 +348,7 @@ function Articles() {
 
   useEffect(() => { load(); }, []);
   const categoryMap = useMemo(() => new Map(categories.map((category) => [category.id, category.name])), [categories]);
+  const inlineImages = useMemo(() => extractInlineImages(form.content), [form.content]);
 
   const edit = (article) => {
     setId(article.id);
@@ -368,6 +371,69 @@ function Articles() {
     catch (err) { setError(err.message); }
   };
 
+  const uploadImage = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const allowedTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif']);
+    if (!allowedTypes.has(file.type)) {
+      setError('Supported image types are JPEG, PNG, WebP, GIF and AVIF');
+      event.target.value = '';
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setError('Article image must be at most 5 MB');
+      event.target.value = '';
+      return;
+    }
+
+    const textarea = contentRef.current;
+    const start = textarea?.selectionStart ?? form.content.length;
+    const end = textarea?.selectionEnd ?? start;
+    setImageBusy(true);
+    setError('');
+
+    try {
+      const result = await uploadArticleImage(file);
+      const token = `[[image:${result.image.id}|100]]`;
+      setForm((current) => {
+        const before = current.content.slice(0, start);
+        const after = current.content.slice(end);
+        const prefix = before && !before.endsWith('\n') ? '\n' : '';
+        const suffix = after && !after.startsWith('\n') ? '\n' : '';
+        return { ...current, content: `${before}${prefix}${token}${suffix}${after}` };
+      });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setImageBusy(false);
+      event.target.value = '';
+    }
+  };
+
+  const resizeImage = (start, width) => {
+    setForm((current) => {
+      const target = extractInlineImages(current.content).find((image) => image.start === start);
+      if (!target) return current;
+      const replacement = `[[image:${target.id}|${width}]]`;
+      return {
+        ...current,
+        content: current.content.slice(0, target.start) + replacement + current.content.slice(target.end),
+      };
+    });
+  };
+
+  const removeImage = (start) => {
+    setForm((current) => {
+      const target = extractInlineImages(current.content).find((image) => image.start === start);
+      if (!target) return current;
+      return {
+        ...current,
+        content: (current.content.slice(0, target.start) + current.content.slice(target.end))
+          .replace(/\n{3,}/g, '\n\n'),
+      };
+    });
+  };
+
   const upload = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -386,7 +452,22 @@ function Articles() {
         <Field label="Title"><input required maxLength="200" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
         <Field label="Category">{loading ? <Skeleton height="41px" /> : <select required value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}><option value="">Select category</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select>}</Field>
         <Field label="Summary"><textarea rows="3" maxLength="600" value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} /></Field>
-        <Field label="Content"><textarea rows="14" required value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} /></Field>
+        <Field label="Content"><textarea ref={contentRef} rows="14" required value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} /></Field>
+        <Field label="Add inline image"><input type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/avif" disabled={imageBusy} onChange={uploadImage} /></Field>
+        {imageBusy && <div className="image-upload-placeholder"><Skeleton width="100%" height="72px" /></div>}
+        {inlineImages.length > 0 && <div className="inline-image-controls">
+          {inlineImages.map((image) => <div className="inline-image-control" key={`${image.id}-${image.start}`}>
+            <img src={articleImageUrl(image.id)} alt="" />
+            <div>
+              <b>Inline image</b>
+              <small>{image.id}</small>
+            </div>
+            <label><span>Width</span><select value={image.width} onChange={(event) => resizeImage(image.start, Number(event.target.value))}>
+              {[25, 50, 75, 100].map((width) => <option key={width} value={width}>{width}%</option>)}
+            </select></label>
+            <button type="button" className="secondary" onClick={() => removeImage(image.start)}>Remove</button>
+          </div>)}
+        </div>}
         <Field label="Status"><select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}><option value="draft">Draft</option><option value="published">Published</option></select></Field>
         <Field label="Import .txt or .md"><input type="file" accept=".txt,.md,text/plain,text/markdown" onChange={upload} /></Field>
         {error && <ErrorBox text={error} />}
@@ -555,6 +636,55 @@ function Settings({ boot, refresh }) {
       {error && <ErrorBox text={error} />}
     </div>
   </section>;
+}
+
+function extractInlineImages(content) {
+  const images = [];
+  const pattern = /\[\[image:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\|(25|50|75|100)\]\]/gi;
+  let match;
+  while ((match = pattern.exec(String(content || '')))) {
+    images.push({
+      id: match[1],
+      width: Number(match[2]),
+      start: match.index,
+      end: pattern.lastIndex,
+    });
+  }
+  return images;
+}
+
+function articlePlainText(content) {
+  return String(content || '')
+    .replace(/\[\[image:[0-9a-f-]{36}\|(25|50|75|100)\]\]/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function renderArticleContent(content) {
+  const text = String(content || '');
+  const pattern = /\[\[image:([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\|(25|50|75|100)\]\]/gi;
+  const nodes = [];
+  let cursor = 0;
+  let match;
+  let index = 0;
+
+  while ((match = pattern.exec(text))) {
+    if (match.index > cursor) {
+      nodes.push(<span className="article-text" key={`text-${index++}`}>{text.slice(cursor, match.index)}</span>);
+    }
+    const id = match[1];
+    const width = Number(match[2]);
+    nodes.push(<figure className="inline-article-image" style={{ width: `${width}%` }} key={`image-${id}-${index++}`}>
+      <img src={articleImageUrl(id)} alt="Article image" loading="lazy" />
+    </figure>);
+    cursor = pattern.lastIndex;
+  }
+
+  if (cursor < text.length) {
+    nodes.push(<span className="article-text" key={`text-${index}`}>{text.slice(cursor)}</span>);
+  }
+
+  return nodes;
 }
 
 function AppSkeleton() {
