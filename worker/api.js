@@ -735,7 +735,7 @@ function validateInlineImageTokens(content) {
   if (!content.includes(tokenStart)) return;
   const validToken = /\[\[image:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\|(25|50|75|100)\]\]/gi;
   const remaining = content.replace(validToken, '');
-  if (remaining.includes(tokenStart)) {
+  if (remaining.toLowerCase().includes(tokenStart)) {
     throw new ApiError(400, 'Article contains an invalid inline image token', 'INVALID_IMAGE_TOKEN');
   }
 }
