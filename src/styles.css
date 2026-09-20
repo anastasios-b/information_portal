@@ -15,3 +15,16 @@
 .portal-tools input,.portal-tools select{min-height:44px}
 .results-count{margin:0 0 1rem;color:#747970;font-size:.82rem}
 @media(max-width:640px){.portal-tools{grid-template-columns:1fr}}
+
+.skeleton{display:block;max-width:100%;border-radius:7px;background:linear-gradient(90deg,#ecece6 25%,#f5f5f1 50%,#ecece6 75%);background-size:200% 100%;animation:skeleton-shimmer 1.35s ease-in-out infinite}
+.hero .skeleton{margin-bottom:.8rem}
+.skeleton-section{display:grid;gap:1rem}
+.skeleton-grid{margin-top:.15rem}
+.skeleton-card{pointer-events:none}
+.skeleton-card>div{display:grid;gap:.75rem}
+.skeleton-record{pointer-events:none}
+.skeleton-record>div:first-child{width:min(360px,65%);gap:.55rem}
+.skeleton-record>div:last-child{display:flex;gap:.4rem}
+.app-skeleton{min-height:100vh}
+@keyframes skeleton-shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+@media(prefers-reduced-motion:reduce){.skeleton{animation:none;background:#ecece6}}
