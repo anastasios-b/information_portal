@@ -796,7 +796,11 @@ function validateInlineImageTokens(content) {
 
   const validToken = /\[\[image:([^|\]\r\n]+)\|(25|50|75|100)\]\]/gi;
   let match;
-  while ((match = validToken.exec(content))) validateArticleImageReference(match[1]);
+  try {
+    while ((match = validToken.exec(content))) validateArticleImageReference(match[1]);
+  } catch {
+    throw new ApiError(400, 'Article contains an invalid inline image token', 'INVALID_IMAGE_TOKEN');
+  }
 
   const remaining = content.replace(validToken, '');
   if (remaining.toLowerCase().includes(tokenStart)) {
