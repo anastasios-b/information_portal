@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "test": "node --test worker/*.test.js",
+    "build": "npm test && vite build",
     "preview": "vite preview",
-    "dev:worker": "npm run build && wrangler dev",
+    "dev:worker": "vite build && wrangler dev",
     "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
