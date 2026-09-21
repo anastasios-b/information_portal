@@ -11,6 +11,7 @@ const KEYS = {
   articles: 'db/articles.json',
   categories: 'db/article-categories.json',
   settings: 'db/settings.json',
+  logbook: 'db/logbook.json',
   legacy: 'db/information-portal.json',
 };
 
@@ -188,7 +189,7 @@ test('public categories endpoint reads only settings and categories', async () =
   assert.deepEqual(new Set(e.PORTAL_DATA.reads), new Set([KEYS.settings, KEYS.categories]));
 });
 
-test('mode changes require administrator password and mutate only settings after authentication read', async () => {
+test('mode changes require administrator password and write settings plus audit log after authentication read', async () => {
   const e = env();
   const admin = await setupAdmin(e);
   await call(e, '/api/bootstrap', { cookie: admin.cookie });
@@ -199,8 +200,12 @@ test('mode changes require administrator password and mutate only settings after
   e.PORTAL_DATA.resetTrace();
   result = await call(e, '/api/admin/settings', { method: 'PATCH', cookie: admin.cookie, body: { mode: 'public', password: ADMIN_PASSWORD } });
   assert.equal(result.response.status, 200);
-  assert.deepEqual(new Set(e.PORTAL_DATA.reads), new Set([KEYS.users, KEYS.settings]));
+  assert.deepEqual(new Set(e.PORTAL_DATA.reads), new Set([KEYS.users, KEYS.settings, KEYS.logbook]));
   assert.equal(e.PORTAL_DATA.data(KEYS.settings).mode, 'public');
+  const logbook = e.PORTAL_DATA.data(KEYS.logbook);
+  assert.equal(logbook.entries.at(-1).action, 'Portal State Update');
+  assert.equal(logbook.entries.at(-1).entityLabel, 'Portal');
+  assert.equal(logbook.entries.at(-1).userEmail, 'admin@example.com');
 });
 
 test('category CRUD and article integrity use only required split stores', async () => {
