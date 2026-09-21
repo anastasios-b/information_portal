@@ -1136,13 +1136,93 @@ function toLocalDateTimeValue(value = new Date().toISOString()) {
   return shifted.toISOString().slice(0, 16);
 }
 
+function sortAnnouncementsClient(announcements) {
+  return [...(announcements || [])].sort((a, b) => {
+    const aOrdered = Number.isInteger(a.sortOrder);
+    const bOrdered = Number.isInteger(b.sortOrder);
+    if (aOrdered && bOrdered && a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+    if (aOrdered !== bOrdered) return aOrdered ? -1 : 1;
+    return String(b.startAt || '').localeCompare(String(a.startAt || ''));
+  });
+}
+
 function Announcements({ content, patchContent }) {
   const empty = () => ({ title: '', content: '', startAt: toLocalDateTimeValue(), endAt: '' });
   const items = content?.announcements || [];
+  const [orderedItems, setOrderedItems] = useState(() => sortAnnouncementsClient(items));
+  const [draggedId, setDraggedId] = useState(null);
+  const [orderDirty, setOrderDirty] = useState(false);
+  const [orderSaving, setOrderSaving] = useState(false);
+  const orderedItemsRef = useRef(sortAnnouncementsClient(items));
+  const orderDirtyRef = useRef(false);
+  const orderSavingRef = useRef(false);
   const [form, setForm] = useState(empty);
   const [id, setId] = useState();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (orderDirtyRef.current || draggedId) return;
+    const next = sortAnnouncementsClient(items);
+    orderedItemsRef.current = next;
+    setOrderedItems(next);
+  }, [items, draggedId]);
+
+  const moveAnnouncement = (targetId) => {
+    if (!draggedId || draggedId === targetId) return;
+    setOrderedItems((current) => {
+      const fromIndex = current.findIndex((item) => item.id === draggedId);
+      const toIndex = current.findIndex((item) => item.id === targetId);
+      if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return current;
+
+      const next = [...current];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      orderedItemsRef.current = next;
+      orderDirtyRef.current = true;
+      setOrderDirty(true);
+      return next;
+    });
+  };
+
+  const persistAnnouncementOrder = async () => {
+    if (!orderDirtyRef.current || orderSavingRef.current) return;
+    const snapshot = [...orderedItemsRef.current];
+    orderSavingRef.current = true;
+    setOrderSaving(true);
+    setError('');
+
+    try {
+      const result = await api('/api/announcements/order', {
+        method: 'PUT',
+        body: JSON.stringify({ ids: snapshot.map((announcement) => announcement.id) }),
+      });
+      const saved = sortAnnouncementsClient(result.announcements || snapshot);
+      orderedItemsRef.current = saved;
+      orderDirtyRef.current = false;
+      setOrderDirty(false);
+      setOrderedItems(saved);
+      resetContentRequests();
+
+      const order = new Map(saved.map((announcement, index) => [announcement.id, index]));
+      patchContent((current, meta) => {
+        if (meta.manage) return { ...current, announcements: saved };
+        return {
+          ...current,
+          announcements: [...(current.announcements || [])].sort(
+            (a, b) => (order.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.id) ?? Number.MAX_SAFE_INTEGER),
+          ),
+        };
+      });
+    } catch (err) {
+      orderDirtyRef.current = true;
+      setOrderDirty(true);
+      setError(err.message);
+    } finally {
+      orderSavingRef.current = false;
+      setOrderSaving(false);
+    }
+  };
 
   const reset = () => { setId(undefined); setForm(empty()); setError(''); };
   const edit = (announcement) => {
@@ -1175,8 +1255,7 @@ function Announcements({ content, patchContent }) {
         const active = isAnnouncementActiveClient(saved);
         return {
           ...current,
-          announcements: (meta.manage || active ? [saved, ...remaining] : remaining)
-            .sort((a, b) => b.startAt.localeCompare(a.startAt)),
+          announcements: sortAnnouncementsClient(meta.manage || active ? [saved, ...remaining] : remaining),
         };
       });
       reset();
@@ -1209,21 +1288,51 @@ function Announcements({ content, patchContent }) {
         {id && <button type="button" className="secondary" onClick={reset}>Cancel</button>}
       </form>
 
-      <div className="card"><h2>Existing announcements</h2><div className="records">
-        {items.map((announcement) => {
-          const stopped = isAnnouncementStoppedClient(announcement);
-          return <div className="record" key={announcement.id}>
-          <div>
-            <div className="announcement-record-title">
-              <b>{announcement.title}</b>
-              <span className={`announcement-status ${stopped ? 'stopped' : 'active'}`}>{stopped ? 'Stopped' : 'Active'}</span>
-            </div>
-            <small>{new Date(announcement.startAt).toLocaleString()} → {announcement.endAt ? new Date(announcement.endAt).toLocaleString() : 'No end date'} · {announcement.id}</small>
-          </div>
-          <div><button className="secondary" onClick={() => edit(announcement)}>Edit</button><button className="danger" onClick={() => remove(announcement)}>Delete</button></div>
-        </div>;
-        })}
-      </div>{!items.length && <p className="hint">No announcements yet.</p>}</div>
+      <div className="card"><h2>Existing announcements</h2>
+        <div
+          className="records announcement-order-list"
+          onMouseLeave={() => { void persistAnnouncementOrder(); }}
+        >
+          {orderedItems.map((announcement) => {
+            const stopped = isAnnouncementStoppedClient(announcement);
+            return <div
+              className={`record announcement-order-record${draggedId === announcement.id ? ' dragging' : ''}`}
+              key={announcement.id}
+              onDragOver={(event) => {
+                event.preventDefault();
+                moveAnnouncement(announcement.id);
+              }}
+              onDrop={(event) => event.preventDefault()}
+            >
+              <span
+                className="announcement-drag-handle"
+                draggable
+                title="Drag to reorder"
+                aria-label={`Drag ${announcement.title} to reorder`}
+                onDragStart={(event) => {
+                  setDraggedId(announcement.id);
+                  event.dataTransfer.effectAllowed = 'move';
+                  event.dataTransfer.setData('text/plain', announcement.id);
+                }}
+                onDragEnd={() => {
+                  setDraggedId(null);
+                  void persistAnnouncementOrder();
+                }}
+              >⋮⋮</span>
+              <div>
+                <div className="announcement-record-title">
+                  <b>{announcement.title}</b>
+                  <span className={`announcement-status ${stopped ? 'stopped' : 'active'}`}>{stopped ? 'Stopped' : 'Active'}</span>
+                </div>
+                <small>{new Date(announcement.startAt).toLocaleString()} → {announcement.endAt ? new Date(announcement.endAt).toLocaleString() : 'No end date'} · {announcement.id}</small>
+              </div>
+              <div><button className="secondary" onClick={() => edit(announcement)}>Edit</button><button className="danger" onClick={() => remove(announcement)}>Delete</button></div>
+            </div>;
+          })}
+        </div>
+        <p className="hint">{orderSaving ? 'Saving order…' : orderDirty ? 'Order changed. It will save automatically when you leave the list.' : 'Drag announcements to reorder them.'}</p>
+        {!orderedItems.length && <p className="hint">No announcements yet.</p>}
+      </div>
     </div>
   </section>;
 }
