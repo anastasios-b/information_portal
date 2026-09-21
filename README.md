@@ -86,7 +86,10 @@ Existing users, password hashes, articles, categories, visibility mode, UUIDs, a
 - Administrators manage users, categories, articles, announcements, visibility, and the administrator-only logbook.
 - Editors manage categories, articles, and announcements.
 - Readers consume published content.
-- Comments are available only while the portal is private and can be posted by authenticated administrators, editors, and readers.
+- Comments are available only while the portal is private.
+- Administrators and editors always have comment write access.
+- Reader comment writing is an administrator-controlled per-user boolean and defaults to disabled.
+- Users with comment write access can edit or delete only their own comments.
 - The last administrator cannot be deleted or demoted.
 - Visibility changes require the logged-in administrator's current password.
 - The currently selected visibility mode cannot be selected again.
@@ -225,3 +228,17 @@ The portal's distinct accent color is:
 ```text
 #e74e24
 ```
+
+
+## Portal identity
+
+Portal name is configurable by administrators under **Settings → Portal name**. Existing installations default to **Information Portal**. The configured value is used for the visible portal/admin brand, sign-in screen, and browser document title.
+
+## Announcement status
+
+The Announcements admin list displays a status indicator immediately after the title:
+
+- **Stopped** in orange when an end date exists and has already passed.
+- **Active** in green otherwise.
+
+The status badge is an administrative indicator; portal visibility still follows the announcement start/end scheduling rules.
