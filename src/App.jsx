@@ -699,6 +699,7 @@ function Logbook() {
         <div className="logbook-row logbook-head" role="row">
           <div role="columnheader">Action</div>
           <div role="columnheader">Affected entity</div>
+          <div role="columnheader">Previous Value</div>
           <div role="columnheader">User</div>
           <div role="columnheader">Action taken at</div>
         </div>
@@ -706,6 +707,13 @@ function Logbook() {
           <div role="cell"><b>{entry.action}</b></div>
           <div role="cell" className="logbook-entity">
             {entry.entityId ? <><span>{entry.entityLabel}</span><code>{entry.entityId}</code></> : <span>{entry.entityLabel}</span>}
+          </div>
+          <div role="cell" className="logbook-entity">
+            {entry.previousEntityLabel
+              ? entry.previousEntityId
+                ? <><span>{entry.previousEntityLabel}</span><code>{entry.previousEntityId}</code></>
+                : <span>{entry.previousEntityLabel}</span>
+              : <span className="logbook-empty">—</span>}
           </div>
           <div role="cell">{entry.userEmail}</div>
           <div role="cell"><time dateTime={entry.createdAt}>{new Date(entry.createdAt).toLocaleString()}</time></div>
@@ -719,6 +727,7 @@ function Logbook() {
 function LogbookSkeleton() {
   return <>{Array.from({ length: 6 }, (_, index) => <div className="logbook-row" role="row" key={index} aria-hidden="true">
     <div><Skeleton width="120px" height="15px" /></div>
+    <div><Skeleton width="90%" height="15px" /></div>
     <div><Skeleton width="90%" height="15px" /></div>
     <div><Skeleton width="150px" height="15px" /></div>
     <div><Skeleton width="145px" height="15px" /></div>
