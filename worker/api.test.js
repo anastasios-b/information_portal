@@ -119,8 +119,8 @@ async function setupAdmin(environment) {
   assert.equal(result.response.status, 201);
   return { ...result, cookie: cookieFrom(result.response) };
 }
-async function createCategory(environment, cookie, name = 'General') {
-  const result = await call(environment, '/api/categories', { method: 'POST', cookie, body: { name } });
+async function createCategory(environment, cookie, name = 'General', hidden = false) {
+  const result = await call(environment, '/api/categories', { method: 'POST', cookie, body: { name, hidden } });
   assert.equal(result.response.status, 201);
   return result.payload.category;
 }
@@ -179,7 +179,7 @@ test('legacy monolith migrates lazily into split files without data loss', async
   assert.equal(e.PORTAL_DATA.data(KEYS.categories).categories[0].name, 'Legacy category');
 });
 
-test('public article endpoint reads only settings and articles once stores exist', async () => {
+test('public article endpoint reads settings, articles and categories for visibility filtering', async () => {
   const e = env();
   const admin = await setupAdmin(e);
   const category = await createCategory(e, admin.cookie);
@@ -189,7 +189,7 @@ test('public article endpoint reads only settings and articles once stores exist
   e.PORTAL_DATA.resetTrace();
   const result = await call(e, '/api/articles');
   assert.equal(result.response.status, 200);
-  assert.deepEqual(new Set(e.PORTAL_DATA.reads), new Set([KEYS.settings, KEYS.articles]));
+  assert.deepEqual(new Set(e.PORTAL_DATA.reads), new Set([KEYS.settings, KEYS.articles, KEYS.categories]));
 });
 
 test('public categories endpoint reads only settings and categories', async () => {
@@ -854,4 +854,69 @@ test('portal name defaults safely and can be changed by administrators', async (
   const entry = result.payload.entries.find((item) => item.action === 'Portal Name Update');
   assert.equal(entry.entityLabel, 'Portal');
   assert.equal(entry.previousEntityLabel, 'Information Portal');
+});
+
+
+test('hidden categories hide exclusive articles while multi-category visible articles remain available', async () => {
+  const e = env();
+  const admin = await setupAdmin(e);
+  const hiddenCategory = await createCategory(e, admin.cookie, 'Hidden category', true);
+  const visibleCategory = await createCategory(e, admin.cookie, 'Visible category', false);
+
+  let result = await call(e, '/api/articles', {
+    method: 'POST',
+    cookie: admin.cookie,
+    body: {
+      title: 'Hidden only',
+      summary: '',
+      content: 'Hidden article content',
+      status: 'published',
+      categoryIds: [hiddenCategory.id],
+    },
+  });
+  assert.equal(result.response.status, 201);
+  const hiddenOnlyId = result.payload.article.id;
+
+  result = await call(e, '/api/articles', {
+    method: 'POST',
+    cookie: admin.cookie,
+    body: {
+      title: 'Mixed categories',
+      summary: '',
+      content: 'Visible article content',
+      status: 'published',
+      categoryIds: [hiddenCategory.id, visibleCategory.id],
+    },
+  });
+  assert.equal(result.response.status, 201);
+  const mixedId = result.payload.article.id;
+
+  await call(e, '/api/admin/settings', {
+    method: 'PATCH',
+    cookie: admin.cookie,
+    body: { mode: 'public', password: ADMIN_PASSWORD },
+  });
+
+  result = await call(e, '/api/content');
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(result.payload.categories.map((category) => category.id), [visibleCategory.id]);
+  assert.equal(result.payload.articles.some((article) => article.id === hiddenOnlyId), false);
+  assert.equal(result.payload.articles.some((article) => article.id === mixedId), true);
+
+  result = await call(e, '/api/articles');
+  assert.equal(result.payload.articles.some((article) => article.id === hiddenOnlyId), false);
+  assert.equal(result.payload.articles.some((article) => article.id === mixedId), true);
+
+  result = await call(e, '/api/categories');
+  assert.deepEqual(result.payload.categories.map((category) => category.id), [visibleCategory.id]);
+
+  result = await call(e, '/api/content?manage=1', { cookie: admin.cookie });
+  assert.equal(result.payload.categories.some((category) => category.id === hiddenCategory.id && category.hidden === true), true);
+  assert.equal(result.payload.articles.some((article) => article.id === hiddenOnlyId), true);
+
+  result = await call(e, `/api/articles/${hiddenOnlyId}`);
+  assert.equal(result.response.status, 401);
+
+  result = await call(e, `/api/articles/${hiddenOnlyId}`, { cookie: admin.cookie });
+  assert.equal(result.response.status, 200);
 });
