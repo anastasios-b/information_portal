@@ -913,6 +913,6 @@ function NewTabIcon() {
 
 const Field = ({ label, children }) => <label><span>{label}</span>{children}</label>;
 const ErrorBox = ({ text }) => <div className="error">{text}</div>;
-const Head = ({ title, text }) => <header className="head"><small>Administration</small><h1>{title}</h1><p>{text}</p></header>;
+const Head = ({ title, text }) => <header className="head"><h1>{title}</h1><p>{text}</p></header>;
 const Center = ({ children }) => <main className="center">{children}</main>;
 const Card = ({ title, text, action }) => <div className="card auth"><h1>{title}</h1><p>{text}</p>{action && <button onClick={action}>Back to portal</button>}</div>;
