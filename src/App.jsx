@@ -644,7 +644,7 @@ function Admin({ path, boot, refresh, content, patchContent }) {
       {activePath === '/admin/announcements' && <Announcements content={content} patchContent={patchContent} />}
       {activePath === '/admin/logbook' && isAdmin && <Logbook />}
       {activePath === '/admin/users' && isAdmin && <Users boot={boot} refresh={refresh} />}
-      {activePath === '/admin/settings' && isAdmin && <Settings boot={boot} refresh={refresh} />}
+      {activePath === '/admin/settings' && isAdmin && <Settings boot={boot} refresh={refresh} patchContent={patchContent} />}
     </main>
   </div>;
 }
@@ -725,13 +725,13 @@ function Articles({ path, content, patchContent }) {
         body: JSON.stringify(form),
       });
       const saved = result.article;
+      resetContentRequests();
       patchContent((current, meta) => {
+        if (!meta.manage) return null;
         const remaining = (current.articles || []).filter((article) => article.id !== saved.id);
-        const shouldInclude = meta.manage || saved.status === 'published';
         return {
           ...current,
-          articles: (shouldInclude ? [saved, ...remaining] : remaining)
-            .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+          articles: [saved, ...remaining].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
         };
       });
       if (!id) navigate(`/admin/articles/${saved.id}`);
@@ -742,11 +742,15 @@ function Articles({ path, content, patchContent }) {
     if (!confirm(`Delete "${article.title}"?`)) return;
     try {
       await api(`/api/articles/${article.id}`, { method: 'DELETE', body: '{}' });
-      patchContent((current) => ({
-        ...current,
-        articles: (current.articles || []).filter((item) => item.id !== article.id),
-        comments: (current.comments || []).filter((comment) => comment.articleId !== article.id),
-      }));
+      resetContentRequests();
+      patchContent((current, meta) => {
+        if (!meta.manage) return null;
+        return {
+          ...current,
+          articles: (current.articles || []).filter((item) => item.id !== article.id),
+          comments: (current.comments || []).filter((comment) => comment.articleId !== article.id),
+        };
+      });
       if (routeEditId === article.id) navigate('/admin/articles');
     } catch (err) { setError(err.message); }
   };
@@ -1388,16 +1392,36 @@ function Users({ boot, refresh }) {
   </section>;
 }
 
-function Settings({ boot, refresh }) {
+function Settings({ boot, refresh, patchContent }) {
+  const defaultHero = {
+    eyebrow: boot.heroEyebrow ?? 'Team knowledge',
+    title: boot.heroTitle || 'Information that stays easy to find.',
+    description: boot.heroDescription || 'Published procedures, references, notes and updates in one lean portal.',
+  };
   const [portalName, setPortalName] = useState(boot.portalName || 'Information Portal');
+  const [hero, setHero] = useState(defaultHero);
+  const [initialArticles, setInitialArticles] = useState(boot.initialArticles || 12);
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [nameBusy, setNameBusy] = useState(false);
+  const [heroBusy, setHeroBusy] = useState(false);
+  const [initialBusy, setInitialBusy] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     setPortalName(boot.portalName || 'Information Portal');
-  }, [boot.portalName]);
+    setHero({
+      eyebrow: boot.heroEyebrow ?? 'Team knowledge',
+      title: boot.heroTitle || 'Information that stays easy to find.',
+      description: boot.heroDescription || 'Published procedures, references, notes and updates in one lean portal.',
+    });
+    setInitialArticles(boot.initialArticles || 12);
+  }, [boot.portalName, boot.heroEyebrow, boot.heroTitle, boot.heroDescription, boot.initialArticles]);
+
+  const invalidatePortalContent = () => {
+    resetContentRequests();
+    patchContent((current, meta) => meta.manage ? current : null);
+  };
 
   const change = async (mode) => {
     if (mode === boot.mode || busy) return;
@@ -1405,6 +1429,7 @@ function Settings({ boot, refresh }) {
     try {
       await api('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ mode, password }) });
       setPassword('');
+      resetContentRequests();
       await refresh();
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
@@ -1418,12 +1443,46 @@ function Settings({ boot, refresh }) {
         method: 'PATCH',
         body: JSON.stringify({ portalName: portalName.trim() }),
       });
+      invalidatePortalContent();
       await refresh();
     } catch (err) { setError(err.message); } finally { setNameBusy(false); }
   };
 
+  const saveHomepage = async (event) => {
+    event.preventDefault();
+    if (!hero.title.trim() || !hero.description.trim() || heroBusy) return;
+    setHeroBusy(true); setError('');
+    try {
+      await api('/api/admin/settings', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          heroEyebrow: hero.eyebrow.trim(),
+          heroTitle: hero.title.trim(),
+          heroDescription: hero.description.trim(),
+        }),
+      });
+      invalidatePortalContent();
+      await refresh();
+    } catch (err) { setError(err.message); } finally { setHeroBusy(false); }
+  };
+
+  const saveInitialArticles = async (event) => {
+    event.preventDefault();
+    const count = Number(initialArticles);
+    if (!Number.isInteger(count) || count < 1 || count > 1000 || initialBusy) return;
+    setInitialBusy(true); setError('');
+    try {
+      await api('/api/admin/settings', {
+        method: 'PATCH',
+        body: JSON.stringify({ initialArticles: count }),
+      });
+      invalidatePortalContent();
+      await refresh();
+    } catch (err) { setError(err.message); } finally { setInitialBusy(false); }
+  };
+
   return <section>
-    <Head title="Settings" text="Configure the portal identity and visibility." />
+    <Head title="Settings" text="Configure the portal identity, homepage, loading and visibility." />
     <div className="settings-stack">
       <form className="card settings" onSubmit={savePortalName}>
         <h2>Portal name</h2>
@@ -1431,15 +1490,32 @@ function Settings({ boot, refresh }) {
         <Field label="Portal Name"><input required maxLength="120" value={portalName} onChange={(event) => setPortalName(event.target.value)} /></Field>
         <button disabled={nameBusy || !portalName.trim() || portalName.trim() === (boot.portalName || 'Information Portal')}>{nameBusy ? 'Saving…' : 'Save portal name'}</button>
       </form>
+
+      <form className="card settings" onSubmit={saveHomepage}>
+        <h2>Homepage content</h2>
+        <p>Edit the introductory content shown above the article list.</p>
+        <Field label="Hero Label"><input maxLength="80" value={hero.eyebrow} onChange={(event) => setHero({ ...hero, eyebrow: event.target.value })} /></Field>
+        <Field label="Hero Title"><input required maxLength="200" value={hero.title} onChange={(event) => setHero({ ...hero, title: event.target.value })} /></Field>
+        <Field label="Hero Description"><textarea required rows="3" maxLength="500" value={hero.description} onChange={(event) => setHero({ ...hero, description: event.target.value })} /></Field>
+        <button disabled={heroBusy || !hero.title.trim() || !hero.description.trim()}>{heroBusy ? 'Saving…' : 'Save homepage content'}</button>
+      </form>
+
+      <form className="card settings" onSubmit={saveInitialArticles}>
+        <h2>Article loading</h2>
+        <p>Initial Articles controls how many of the newest published articles are loaded before the full article database loads in the background.</p>
+        <Field label="Initial Articles"><input type="number" min="1" max="1000" step="1" required value={initialArticles} onChange={(event) => setInitialArticles(event.target.value)} /></Field>
+        <button disabled={initialBusy || Number(initialArticles) === (boot.initialArticles || 12)}>{initialBusy ? 'Saving…' : 'Save initial article count'}</button>
+      </form>
+
       <div className="card settings">
-      <h2>Portal visibility</h2>
-      <p>Private requires login. Public exposes published articles only; drafts and administration remain protected.</p>
-      <Field label="Confirm with your administrator password"><input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter password before switching" /></Field>
-      <div className="modes">
-        <button disabled={busy || boot.mode === 'private' || !password} className={boot.mode === 'private' ? 'chosen' : ''} onClick={() => change('private')}>Private<br /><small>Login required</small></button>
-        <button disabled={busy || boot.mode === 'public' || !password} className={boot.mode === 'public' ? 'chosen' : ''} onClick={() => change('public')}>Public<br /><small>Published articles visible</small></button>
-      </div>
-      {error && <ErrorBox text={error} />}
+        <h2>Portal visibility</h2>
+        <p>Private requires login. Public exposes published articles only; drafts and administration remain protected.</p>
+        <Field label="Confirm with your administrator password"><input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter password before switching" /></Field>
+        <div className="modes">
+          <button disabled={busy || boot.mode === 'private' || !password} className={boot.mode === 'private' ? 'chosen' : ''} onClick={() => change('private')}>Private<br /><small>Login required</small></button>
+          <button disabled={busy || boot.mode === 'public' || !password} className={boot.mode === 'public' ? 'chosen' : ''} onClick={() => change('public')}>Public<br /><small>Published articles visible</small></button>
+        </div>
+        {error && <ErrorBox text={error} />}
       </div>
     </div>
   </section>;
