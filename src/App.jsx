@@ -55,6 +55,7 @@ export default function App() {
   const [error, setError] = useState('');
   const [contentCache, setContentCache] = useState({});
   const [contentErrors, setContentErrors] = useState({});
+  const [portalQuery, setPortalQuery] = useState('');
 
   const refresh = async () => {
     try {
@@ -82,15 +83,45 @@ export default function App() {
   useEffect(() => {
     if (!needsContent || contentCache[contentKey] || contentErrors[contentKey]) return;
     let active = true;
-    loadContentOnce(contentKey, { manage })
-      .then((data) => {
-        if (!active) return;
-        setContentCache((current) => ({ ...current, [contentKey]: data }));
-      })
-      .catch((err) => {
-        if (!active) return;
-        setContentErrors((current) => ({ ...current, [contentKey]: err.message }));
-      });
+
+    if (manage) {
+      loadContentOnce(contentKey, { manage: true })
+        .then((data) => {
+          if (!active) return;
+          setContentCache((current) => ({ ...current, [contentKey]: data }));
+        })
+        .catch((err) => {
+          if (!active) return;
+          setContentErrors((current) => ({ ...current, [contentKey]: err.message }));
+        });
+    } else {
+      loadContentOnce(contentKey, { initial: true })
+        .then((initialData) => {
+          if (!active) return;
+          setContentCache((current) => ({ ...current, [contentKey]: initialData }));
+
+          loadContentOnce(contentKey)
+            .then((fullData) => {
+              if (!active) return;
+              setContentCache((current) => ({ ...current, [contentKey]: fullData }));
+            })
+            .catch((err) => {
+              if (!active) return;
+              setContentCache((current) => ({
+                ...current,
+                [contentKey]: {
+                  ...(current[contentKey] || initialData),
+                  articlesLoadError: err.message,
+                },
+              }));
+            });
+        })
+        .catch((err) => {
+          if (!active) return;
+          setContentErrors((current) => ({ ...current, [contentKey]: err.message }));
+        });
+    }
+
     return () => { active = false; };
   }, [contentKey, contentCache, contentErrors, manage, needsContent]);
 
@@ -131,9 +162,23 @@ export default function App() {
   }
 
   if (path.startsWith('/articles/')) {
-    return <ArticlePage path={path} boot={boot} refresh={refresh} content={content} patchContent={patchContent} />;
+    return <ArticlePage
+      path={path}
+      boot={boot}
+      refresh={refresh}
+      content={content}
+      patchContent={patchContent}
+      searchQuery={portalQuery}
+      setSearchQuery={setPortalQuery}
+    />;
   }
-  return <Home boot={boot} refresh={refresh} content={content} />;
+  return <Home
+    boot={boot}
+    refresh={refresh}
+    content={content}
+    searchQuery={portalQuery}
+    setSearchQuery={setPortalQuery}
+  />;
 }
 
 function Login({ mode, portalName, refresh }) {
