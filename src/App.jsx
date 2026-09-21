@@ -257,24 +257,30 @@ function Setup({ boot, refresh }) {
   </div></Center>;
 }
 
-function Home({ boot, refresh, content }) {
+function filterPortalArticles(articles, categories, query, categoryFilter = '') {
+  const categoryMap = new Map((categories || []).map((category) => [category.id, category.name]));
+  const needle = String(query || '').trim().toLocaleLowerCase();
+
+  return (articles || []).filter((article) => {
+    const categoryNames = (article.categoryIds || []).map((categoryId) => categoryMap.get(categoryId)).filter(Boolean);
+    if (categoryFilter && !(article.categoryIds || []).includes(categoryFilter)) return false;
+    if (!needle) return true;
+    return [article.title, article.summary, articlePlainText(article.content), ...categoryNames]
+      .some((value) => String(value || '').toLocaleLowerCase().includes(needle));
+  });
+}
+
+function Home({ boot, refresh, content, searchQuery, setSearchQuery }) {
   const articles = content?.articles || [];
   const categories = content?.categories || [];
   const announcements = content?.announcements || [];
-  const [query, setQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
 
   const categoryMap = useMemo(() => new Map(categories.map((category) => [category.id, category.name])), [categories]);
-  const filteredArticles = useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase();
-    return articles.filter((article) => {
-      const categoryNames = (article.categoryIds || []).map((categoryId) => categoryMap.get(categoryId)).filter(Boolean);
-      if (categoryFilter && !(article.categoryIds || []).includes(categoryFilter)) return false;
-      if (!needle) return true;
-      return [article.title, article.summary, articlePlainText(article.content), ...categoryNames]
-        .some((value) => String(value || '').toLocaleLowerCase().includes(needle));
-    });
-  }, [articles, categoryFilter, categoryMap, query]);
+  const filteredArticles = useMemo(
+    () => filterPortalArticles(articles, categories, searchQuery, categoryFilter),
+    [articles, categories, categoryFilter, searchQuery],
+  );
 
   const logout = async () => {
     await api('/api/logout', { method: 'POST', body: '{}' });
@@ -282,14 +288,22 @@ function Home({ boot, refresh, content }) {
     navigate('/');
   };
 
-
   return <>
-    <PortalHeader boot={boot} refresh={refresh} logout={logout} />
+    <PortalHeader
+      boot={boot}
+      logout={logout}
+      content={content}
+      searchQuery={searchQuery}
+      setSearchQuery={setSearchQuery}
+    />
     <main className="main portal-layout">
       <div className="portal-primary">
-        <section className="hero"><small>Team knowledge</small><h1>Information that stays easy to find.</h1><p>Published procedures, references, notes and updates in one lean portal.</p></section>
+        <section className="hero">
+          {boot.heroEyebrow && <small>{boot.heroEyebrow}</small>}
+          <h1>{boot.heroTitle || 'Information that stays easy to find.'}</h1>
+          <p>{boot.heroDescription || 'Published procedures, references, notes and updates in one lean portal.'}</p>
+        </section>
         <section className="portal-tools" aria-label="Filter articles">
-          <label className="search-field"><span>Search</span><input type="search" placeholder="Search articles…" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
           <label className="category-filter"><span>Category</span><select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option value="">All categories</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
         </section>
         <p className="results-count">{filteredArticles.length} {filteredArticles.length === 1 ? 'article' : 'articles'}</p>
@@ -308,12 +322,12 @@ function Home({ boot, refresh, content }) {
         {!articles.length && <div className="empty">No published articles yet.</div>}
         {Boolean(articles.length) && !filteredArticles.length && <div className="empty">No matching articles.</div>}
       </div>
-      <PortalSidebar announcements={announcements} articles={articles} />
+      <PortalSidebar announcements={announcements} />
     </main>
   </>;
 }
 
-function ArticlePage({ path, boot, refresh, content, patchContent }) {
+function ArticlePage({ path, boot, refresh, content, patchContent, searchQuery, setSearchQuery }) {
   const articleId = path.split('/').filter(Boolean)[1] || '';
   const article = (content?.articles || []).find((item) => item.id === articleId);
   const categories = content?.categories || [];
@@ -414,11 +428,23 @@ function ArticlePage({ path, boot, refresh, content, patchContent }) {
 
 
   return <>
-    <PortalHeader boot={boot} refresh={refresh} logout={logout} />
+    <PortalHeader
+      boot={boot}
+      logout={logout}
+      content={content}
+      searchQuery={searchQuery}
+      setSearchQuery={setSearchQuery}
+    />
     <main className="article-page portal-layout">
       <div className="portal-primary">
         <button className="article-back" onClick={() => navigate('/')}>← Back to portal</button>
-        {!article ? <ErrorBox text="Article not found" /> : <>
+        {!article
+          ? content?.articlesLoadError
+            ? <ErrorBox text={content.articlesLoadError} />
+            : content?.articlesComplete === false
+              ? <ArticlePageSkeleton />
+              : <ErrorBox text="Article not found" />
+          : <>
           <article className="article-document">
             <div className="article-meta">
               {(article.categoryIds || []).map((categoryId) => <span className="tag" key={categoryId}>{categoryMap.get(categoryId) || 'Uncategorized'}</span>)}
@@ -463,7 +489,7 @@ function ArticlePage({ path, boot, refresh, content, patchContent }) {
           </section>}
         </>}
       </div>
-      <PortalSidebar announcements={announcements} articles={content?.articles || []} currentArticleId={articleId} />
+      <PortalSidebar announcements={announcements} />
     </main>
   </>;
 }
