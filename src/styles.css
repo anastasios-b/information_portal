@@ -180,3 +180,17 @@
 .announcement-status{display:inline-flex;align-items:center;padding:.2rem .48rem;border-radius:999px;font-size:.72rem;font-weight:800;line-height:1;border:1px solid transparent}
 .announcement-status.active{background:#edf8f1;border-color:#b8dfc4;color:#26713d}
 .announcement-status.stopped{background:#fff2ea;border-color:#f0bf9f;color:#a4511f}
+
+.markdown-editor{display:grid;gap:.45rem}
+.markdown-toolbar{display:flex;align-items:center;gap:.35rem;flex-wrap:wrap;padding:.4rem;border:1px solid #dedfd8;border-radius:9px;background:#f7f7f3}
+.markdown-tool{min-height:31px;padding:.32rem .58rem;font-size:.76rem;line-height:1}
+.markdown-code-tool{padding-inline:.72rem}
+.article-markdown-heading{line-height:1.25;color:#1d201c}
+.article-markdown-h1{font-size:2rem;margin:1.8rem 0 .8rem}
+.article-markdown-h2{font-size:1.65rem;margin:1.6rem 0 .7rem}
+.article-markdown-h3{font-size:1.35rem;margin:1.4rem 0 .65rem}
+.article-markdown-h4{font-size:1.15rem;margin:1.25rem 0 .55rem}
+.article-markdown-h5{font-size:1rem;margin:1.15rem 0 .5rem}
+.article-markdown-h6{font-size:.9rem;margin:1rem 0 .45rem;text-transform:uppercase;letter-spacing:.04em}
+.article-code-block{margin:1.4rem 0;padding:1rem 1.1rem;overflow:auto;border:1px solid #d8dad3;border-radius:12px;background:#f4f4f0;color:#252923;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;font-size:.9rem;line-height:1.6;white-space:pre}
+.article-code-block code{font:inherit;color:inherit}
