@@ -304,7 +304,7 @@ async function getArticleImage(request, env, reference) {
   return new Response(object.body, { status: 200, headers });
 }
 
-async function getContent(request, env, manage) {
+async function getContent(request, env, manage, initial = false) {
   const { data: settings } = await readStore(env, 'settings');
   let user = null;
 
@@ -314,8 +314,12 @@ async function getContent(request, env, manage) {
     ({ user } = await authenticate(request, env, ['administrator', 'editor', 'reader']));
   }
 
+  const articleRead = manage || !initial
+    ? readStore(env, 'articles')
+    : readInitialArticlesStore(env);
+
   const storeReads = [
-    readStore(env, 'articles'),
+    articleRead,
     readStore(env, 'categories'),
     readStore(env, 'announcements'),
   ];
@@ -328,12 +332,12 @@ async function getContent(request, env, manage) {
   const commentStore = stores[3]?.data;
 
   const visibleCategories = categoryStore.categories.filter((category) => !category.hidden);
-  const articles = sortArticles(
-    manage
-      ? articleStore.articles
-      : articleStore.articles.filter((article) =>
-          article.status === 'published' && articleHasVisibleCategory(article, categoryStore.categories)),
-  ).map((article) => manage ? publicArticle(article) : portalArticle(article, categoryStore.categories));
+  const eligibleArticles = manage
+    ? articleStore.articles
+    : articleStore.articles.filter((article) =>
+        article.status === 'published' && articleHasVisibleCategory(article, categoryStore.categories));
+  const articles = (manage ? sortArticles(eligibleArticles) : sortArticlesByCreatedAt(eligibleArticles))
+    .map((article) => manage ? publicArticle(article) : portalArticle(article, categoryStore.categories));
 
   const now = Date.now();
   const announcements = sortAnnouncements(
@@ -350,6 +354,8 @@ async function getContent(request, env, manage) {
   return json({
     mode: settings.mode,
     portalName: portalName(settings),
+    initialArticles: initialArticlesCount(settings),
+    articlesComplete: manage || !initial,
     user: user ? publicUser(user) : null,
     articles,
     categories: sortCategories(manage ? categoryStore.categories : visibleCategories),
