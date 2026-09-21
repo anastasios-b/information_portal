@@ -941,13 +941,19 @@ function Announcements({ content, patchContent }) {
       </form>
 
       <div className="card"><h2>Existing announcements</h2><div className="records">
-        {items.map((announcement) => <div className="record" key={announcement.id}>
+        {items.map((announcement) => {
+          const stopped = isAnnouncementStoppedClient(announcement);
+          return <div className="record" key={announcement.id}>
           <div>
-            <b>{announcement.title}</b>
+            <div className="announcement-record-title">
+              <b>{announcement.title}</b>
+              <span className={`announcement-status ${stopped ? 'stopped' : 'active'}`}>{stopped ? 'Stopped' : 'Active'}</span>
+            </div>
             <small>{new Date(announcement.startAt).toLocaleString()} → {announcement.endAt ? new Date(announcement.endAt).toLocaleString() : 'No end date'} · {announcement.id}</small>
           </div>
           <div><button className="secondary" onClick={() => edit(announcement)}>Edit</button><button className="danger" onClick={() => remove(announcement)}>Delete</button></div>
-        </div>)}
+        </div>;
+        })}
       </div>{!items.length && <p className="hint">No announcements yet.</p>}</div>
     </div>
   </section>;
@@ -956,6 +962,10 @@ function Announcements({ content, patchContent }) {
 function isAnnouncementActiveClient(announcement) {
   const now = Date.now();
   return Date.parse(announcement.startAt) <= now && (!announcement.endAt || now <= Date.parse(announcement.endAt));
+}
+
+function isAnnouncementStoppedClient(announcement) {
+  return Boolean(announcement.endAt && Date.parse(announcement.endAt) < Date.now());
 }
 
 function Logbook() {
