@@ -40,6 +40,9 @@ export default function App() {
   };
 
   useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    if (boot?.portalName) document.title = boot.portalName;
+  }, [boot?.portalName]);
 
   const isAdminRoute = path.startsWith('/admin');
   const canManage = Boolean(boot?.user && ['administrator', 'editor'].includes(boot.user.role));
@@ -80,12 +83,12 @@ export default function App() {
   if (boot.setupRequired) return <Setup boot={boot} refresh={refresh} />;
 
   if (isAdminRoute) {
-    if (!boot.user) return <Login mode={boot.mode} refresh={refresh} />;
+    if (!boot.user) return <Login mode={boot.mode} portalName={boot.portalName} refresh={refresh} />;
     if (!canManage) {
       return <Center><Card title="Access denied" text="Administrators and editors only." action={() => navigate('/')} /></Center>;
     }
   } else if (boot.mode === 'private' && !boot.user) {
-    return <Login mode={boot.mode} refresh={refresh} />;
+    return <Login mode={boot.mode} portalName={boot.portalName} refresh={refresh} />;
   }
 
   if (needsContent && contentErrors[contentKey]) {
@@ -105,7 +108,7 @@ export default function App() {
   return <Home boot={boot} refresh={refresh} content={content} />;
 }
 
-function Login({ mode, refresh }) {
+function Login({ mode, portalName, refresh }) {
   const [form, setForm] = useState({ email: '', password: '' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -125,7 +128,7 @@ function Login({ mode, refresh }) {
   };
 
   return <Center><div className="card auth">
-    <small>Information Portal</small><h1>Sign in</h1>
+    <small>{portalName || 'Information Portal'}</small><h1>Sign in</h1>
     <p>{mode === 'private' ? 'This portal is private. Sign in to continue.' : 'Staff access.'}</p>
     <form onSubmit={submit}>
       <Field label="Email"><input type="email" autoComplete="username" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
@@ -206,6 +209,62 @@ function Home({ boot, refresh, content }) {
     navigate('/');
   };
 
+  const editComment = (comment) => {
+    setEditingCommentId(comment.id);
+    setEditingCommentText(comment.content);
+    setCommentError('');
+  };
+
+  const cancelCommentEdit = () => {
+    setEditingCommentId(null);
+    setEditingCommentText('');
+  };
+
+  const saveCommentEdit = async (comment) => {
+    if (!editingCommentText.trim() || commentActionId) return;
+    setCommentActionId(comment.id);
+    setCommentError('');
+    try {
+      const result = await api(`/api/articles/${articleId}/comments/${comment.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ content: editingCommentText }),
+      });
+      patchContent((current, meta) => {
+        if (meta.manage || current.mode !== 'private') return current;
+        return {
+          ...current,
+          comments: (current.comments || []).map((item) => item.id === comment.id ? result.comment : item),
+        };
+      });
+      cancelCommentEdit();
+    } catch (err) {
+      setCommentError(err.message);
+    } finally {
+      setCommentActionId(null);
+    }
+  };
+
+  const removeComment = async (comment) => {
+    if (!confirm('Delete this comment?')) return;
+    setCommentActionId(comment.id);
+    setCommentError('');
+    try {
+      await api(`/api/articles/${articleId}/comments/${comment.id}`, { method: 'DELETE', body: '{}' });
+      patchContent((current, meta) => {
+        if (meta.manage || current.mode !== 'private') return current;
+        return {
+          ...current,
+          comments: (current.comments || []).filter((item) => item.id !== comment.id),
+        };
+      });
+      if (editingCommentId === comment.id) cancelCommentEdit();
+    } catch (err) {
+      setCommentError(err.message);
+    } finally {
+      setCommentActionId(null);
+    }
+  };
+
   return <>
     <PortalHeader boot={boot} refresh={refresh} logout={logout} />
     <main className="main portal-layout">
@@ -246,6 +305,10 @@ function ArticlePage({ path, boot, refresh, content, patchContent }) {
   const [commentText, setCommentText] = useState('');
   const [commentBusy, setCommentBusy] = useState(false);
   const [commentError, setCommentError] = useState('');
+  const [editingCommentId, setEditingCommentId] = useState(null);
+  const [editingCommentText, setEditingCommentText] = useState('');
+  const [commentActionId, setCommentActionId] = useState(null);
+  const canWriteComments = boot.user?.canComment === true;
 
   const logout = async () => {
     await api('/api/logout', { method: 'POST', body: '{}' });
@@ -293,16 +356,33 @@ function ArticlePage({ path, boot, refresh, content, patchContent }) {
 
           {boot.mode === 'private' && <section className="comments-section card">
             <h2>Comments</h2>
-            <form className="comment-form" onSubmit={submitComment}>
+            {canWriteComments ? <form className="comment-form" onSubmit={submitComment}>
               <Field label="Add comment"><textarea rows="3" maxLength="4000" required value={commentText} onChange={(event) => setCommentText(event.target.value)} /></Field>
               {commentError && <ErrorBox text={commentError} />}
               <button disabled={commentBusy || !commentText.trim()}>{commentBusy ? 'Posting…' : 'Post comment'}</button>
-            </form>
+            </form> : <p className="comment-readonly-notice">Comment writing is disabled for your account.</p>}
+            {commentError && !canWriteComments && <ErrorBox text={commentError} />}
             <div className="comments-list">
-              {comments.map((comment) => <article className="comment" key={comment.id}>
-                <div className="comment-meta"><b>{comment.userFullName} ({comment.userEmail})</b><small>{new Date(comment.createdAt).toLocaleString()}</small></div>
-                <p>{comment.content}</p>
-              </article>)}
+              {comments.map((comment) => {
+                const owned = comment.userId === boot.user?.id;
+                const editing = editingCommentId === comment.id;
+                return <article className="comment" key={comment.id}>
+                  <div className="comment-meta">
+                    <div><b>{comment.userFullName} ({comment.userEmail})</b><small>{new Date(comment.createdAt).toLocaleString()}</small></div>
+                    {owned && canWriteComments && !editing && <div className="comment-actions">
+                      <button type="button" className="secondary" onClick={() => editComment(comment)}>Edit</button>
+                      <button type="button" className="danger" disabled={commentActionId === comment.id} onClick={() => removeComment(comment)}>Delete</button>
+                    </div>}
+                  </div>
+                  {editing ? <div className="comment-edit">
+                    <textarea rows="3" maxLength="4000" value={editingCommentText} onChange={(event) => setEditingCommentText(event.target.value)} />
+                    <div className="comment-actions">
+                      <button type="button" disabled={!editingCommentText.trim() || commentActionId === comment.id} onClick={() => saveCommentEdit(comment)}>Save</button>
+                      <button type="button" className="secondary" disabled={commentActionId === comment.id} onClick={cancelCommentEdit}>Cancel</button>
+                    </div>
+                  </div> : <p>{comment.content}</p>}
+                </article>;
+              })}
               {!comments.length && <p className="hint">No comments yet.</p>}
             </div>
           </section>}
@@ -315,7 +395,7 @@ function ArticlePage({ path, boot, refresh, content, patchContent }) {
 
 function PortalHeader({ boot, logout }) {
   return <header className="top">
-    <button className="brand-link" onClick={() => navigate('/')}>Information Portal</button>
+    <button className="brand-link" onClick={() => navigate('/')}>{boot.portalName || 'Information Portal'}</button>
     <div>
       <span className="pill">{boot.mode}</span>
       {boot.user ? <>
@@ -391,7 +471,7 @@ function Admin({ path, boot, refresh, content, patchContent }) {
 
   return <div className="layout">
     <aside>
-      <b>Information Portal</b><small>Admin panel</small>
+      <b>{boot.portalName || 'Information Portal'}</b><small>Admin panel</small>
       <nav>
         <NavButton path="/admin/articles" current={activePath}>Articles</NavButton>
         <NavButton path="/admin/categories" current={activePath}>Article Categories</NavButton>
@@ -952,7 +1032,7 @@ function LogbookSkeleton() {
 }
 
 function Users({ boot, refresh }) {
-  const empty = { fullName: '', email: '', password: '', repeat: '', role: 'reader' };
+  const empty = { fullName: '', email: '', password: '', repeat: '', role: 'reader', canComment: false };
   const [items, setItems] = useState([]);
   const [form, setForm] = useState(empty);
   const [id, setId] = useState();
@@ -968,7 +1048,18 @@ function Users({ boot, refresh }) {
   };
   useEffect(() => { load(); }, []);
 
-  const edit = (user) => { setId(user.id); setForm({ fullName: user.fullName || '', email: user.email, password: '', repeat: '', role: user.role }); setError(''); };
+  const edit = (user) => {
+    setId(user.id);
+    setForm({
+      fullName: user.fullName || '',
+      email: user.email,
+      password: '',
+      repeat: '',
+      role: user.role,
+      canComment: user.role === 'reader' ? user.canComment === true : false,
+    });
+    setError('');
+  };
   const reset = () => { setId(undefined); setForm(empty); setError(''); };
   const save = async (event) => {
     event.preventDefault();
@@ -978,7 +1069,13 @@ function Users({ boot, refresh }) {
     try {
       await api(id ? `/api/admin/users/${id}` : '/api/admin/users', {
         method: id ? 'PUT' : 'POST',
-        body: JSON.stringify({ fullName: form.fullName, email: form.email, password: form.password || undefined, role: form.role }),
+        body: JSON.stringify({
+          fullName: form.fullName,
+          email: form.email,
+          password: form.password || undefined,
+          role: form.role,
+          canComment: form.role === 'reader' ? form.canComment : true,
+        }),
       });
       reset(); await Promise.all([load(), refresh()]);
     } catch (err) { setError(err.message); } finally { setBusy(false); }
@@ -1002,7 +1099,11 @@ function Users({ boot, refresh }) {
         <Field label="Email"><input type="email" autoComplete="username" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
         <Field label={id ? 'New password (optional)' : 'Password'}><input type="password" autoComplete="new-password" minLength={form.password ? 10 : undefined} required={!id} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></Field>
         <Field label="Repeat password"><input type="password" autoComplete="new-password" required={!id || Boolean(form.password)} value={form.repeat} onChange={(e) => setForm({ ...form, repeat: e.target.value })} /></Field>
-        <Field label="Role"><select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>{['administrator', 'editor', 'reader'].map((role) => <option key={role}>{role}</option>)}</select></Field>
+        <Field label="Role"><select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value, canComment: e.target.value === 'reader' ? false : form.canComment })}>{['administrator', 'editor', 'reader'].map((role) => <option key={role}>{role}</option>)}</select></Field>
+        {form.role === 'reader' && <label className="boolean-field">
+          <input type="checkbox" checked={form.canComment} onChange={(e) => setForm({ ...form, canComment: e.target.checked })} />
+          <span>Allow comment writing</span>
+        </label>}
         {error && <ErrorBox text={error} />}
         <button disabled={busy}>{busy ? 'Saving…' : id ? 'Save user' : 'Create user'}</button>
         {id && <button type="button" className="secondary" onClick={reset}>Cancel</button>}
@@ -1012,7 +1113,7 @@ function Users({ boot, refresh }) {
         {loading ? <RecordSkeleton count={4} /> : items.map((user) => {
           const protectedAdmin = user.id === boot.user.id && user.role === 'administrator' && adminCount === 1;
           return <div className="record" key={user.id}>
-            <div><b>{user.fullName || user.email}</b><small>{user.email} · {user.role} · {user.id}</small></div>
+            <div><b>{user.fullName || user.email}</b><small>{user.email} · {user.role}{user.role === 'reader' ? ` · comments: ${user.canComment ? 'write' : 'read only'}` : ''} · {user.id}</small></div>
             <div><button className="secondary" onClick={() => edit(user)}>Edit</button><button className="danger" disabled={protectedAdmin} onClick={() => remove(user)}>Delete</button></div>
           </div>;
         })}
@@ -1022,9 +1123,15 @@ function Users({ boot, refresh }) {
 }
 
 function Settings({ boot, refresh }) {
+  const [portalName, setPortalName] = useState(boot.portalName || 'Information Portal');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
+  const [nameBusy, setNameBusy] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    setPortalName(boot.portalName || 'Information Portal');
+  }, [boot.portalName]);
 
   const change = async (mode) => {
     if (mode === boot.mode || busy) return;
@@ -1036,9 +1143,29 @@ function Settings({ boot, refresh }) {
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
 
+  const savePortalName = async (event) => {
+    event.preventDefault();
+    if (!portalName.trim() || nameBusy) return;
+    setNameBusy(true); setError('');
+    try {
+      await api('/api/admin/settings', {
+        method: 'PATCH',
+        body: JSON.stringify({ portalName: portalName.trim() }),
+      });
+      await refresh();
+    } catch (err) { setError(err.message); } finally { setNameBusy(false); }
+  };
+
   return <section>
-    <Head title="Settings" text="Changing visibility preserves all users, categories and articles." />
-    <div className="card settings">
+    <Head title="Settings" text="Configure the portal identity and visibility." />
+    <div className="settings-stack">
+      <form className="card settings" onSubmit={savePortalName}>
+        <h2>Portal name</h2>
+        <p>Used as the portal brand throughout the public and administration interfaces.</p>
+        <Field label="Portal Name"><input required maxLength="120" value={portalName} onChange={(event) => setPortalName(event.target.value)} /></Field>
+        <button disabled={nameBusy || !portalName.trim() || portalName.trim() === (boot.portalName || 'Information Portal')}>{nameBusy ? 'Saving…' : 'Save portal name'}</button>
+      </form>
+      <div className="card settings">
       <h2>Portal visibility</h2>
       <p>Private requires login. Public exposes published articles only; drafts and administration remain protected.</p>
       <Field label="Confirm with your administrator password"><input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter password before switching" /></Field>
@@ -1047,6 +1174,7 @@ function Settings({ boot, refresh }) {
         <button disabled={busy || boot.mode === 'public' || !password} className={boot.mode === 'public' ? 'chosen' : ''} onClick={() => change('public')}>Public<br /><small>Published articles visible</small></button>
       </div>
       {error && <ErrorBox text={error} />}
+      </div>
     </div>
   </section>;
 }
