@@ -97,6 +97,9 @@ test('UI preserves required routes, content controls and single-load behavior', 
   assert.match(app, /\/admin\/articles\/\$\{article\.id\}/);
   assert.match(app, /Live rendering/);
   assert.match(app, /Article preview/);
+  assert.match(app, /View article/);
+  assert.match(app, /href=\{\`\/articles\/\$\{id\}\`\}/);
+  assert.match(app, /className="live-preview-actions"/);
   assert.match(app, /renderArticleContent\(form\.content\)/);
   assert.match(app, /className="markdown-toolbar"/);
   assert.match(app, /\['h1', 'h2', 'h3'\]/);
