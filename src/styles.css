@@ -160,3 +160,15 @@
 .category-option span{line-height:1.3}
 @media(max-width:980px){.portal-layout{grid-template-columns:1fr}.portal-sidebar{position:static;grid-template-columns:repeat(2,minmax(0,1fr))}.article-page.portal-layout .portal-sidebar{grid-template-columns:1fr}}
 @media(max-width:640px){.portal-sidebar{grid-template-columns:1fr}.comment-meta{display:grid;gap:.25rem}}
+
+.settings-stack{display:grid;gap:1rem;max-width:740px}
+.settings-stack .settings{max-width:none}
+.boolean-field{display:flex;align-items:center;gap:.6rem;font-size:.85rem;font-weight:650}
+.boolean-field input{width:auto;max-width:none;min-width:auto;margin:0;accent-color:var(--accent)}
+.comment-readonly-notice{margin:0 0 1rem;padding:.8rem .9rem;border:1px solid #dedfd8;border-radius:9px;background:#f7f7f3;color:#676c64}
+.comment-meta>div:first-child{display:grid;gap:.22rem;min-width:0}
+.comment-actions{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap}
+.comment-actions button{min-height:34px;padding:.42rem .7rem}
+.comment-edit{display:grid;gap:.65rem;margin-top:.7rem}
+.comment-edit textarea{width:100%;max-width:100%;min-width:0;resize:vertical;border:1px solid #d4d6cf;border-radius:9px;padding:.7rem .75rem;background:#fff;color:#1d201c;outline:none}
+.comment-edit textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(231,78,36,.12)}
