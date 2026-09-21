@@ -203,7 +203,7 @@ test('mode changes require administrator password and write settings plus audit 
   assert.deepEqual(new Set(e.PORTAL_DATA.reads), new Set([KEYS.users, KEYS.settings, KEYS.logbook]));
   assert.equal(e.PORTAL_DATA.data(KEYS.settings).mode, 'public');
   const logbook = e.PORTAL_DATA.data(KEYS.logbook);
-  assert.equal(logbook.entries.at(-1).action, 'Portal State Update');
+  assert.equal(logbook.entries.at(-1).action, 'Portal State Update to Public');
   assert.equal(logbook.entries.at(-1).entityLabel, 'Portal');
   assert.equal(logbook.entries.at(-1).userEmail, 'admin@example.com');
 });
