@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, articleImageUrl, cachedPortalApi, clearPortalCache, listArticleImages, uploadArticleImage } from './api.js';
 
-const ADMIN_ROUTES = ['/admin/articles', '/admin/categories', '/admin/users', '/admin/settings'];
+const ADMIN_ROUTES = ['/admin/articles', '/admin/categories', '/admin/logbook', '/admin/users', '/admin/settings'];
 
 function navigate(path, { replace = false } = {}) {
   if (replace) history.replaceState({}, '', path);
@@ -283,6 +283,7 @@ function Admin({ path, boot, refresh }) {
   const isAllowedRoute =
     isArticleRoute ||
     path === '/admin/categories' ||
+    path === '/admin/logbook' ||
     (isAdmin && (path === '/admin/users' || path === '/admin/settings'));
 
   useEffect(() => {
@@ -304,6 +305,7 @@ function Admin({ path, boot, refresh }) {
       <nav>
         <NavButton path="/admin/articles" current={activePath}>Articles</NavButton>
         <NavButton path="/admin/categories" current={activePath}>Article Categories</NavButton>
+        <NavButton path="/admin/logbook" current={activePath}>Logbook</NavButton>
         {isAdmin && <NavButton path="/admin/users" current={activePath}>Users</NavButton>}
         {isAdmin && <NavButton path="/admin/settings" current={activePath}>Settings</NavButton>}
       </nav>
@@ -317,6 +319,7 @@ function Admin({ path, boot, refresh }) {
     <main className="admin">
       {activePath === '/admin/articles' && <Articles path={path} />}
       {activePath === '/admin/categories' && <Categories />}
+      {activePath === '/admin/logbook' && <Logbook />}
       {activePath === '/admin/users' && isAdmin && <Users boot={boot} refresh={refresh} />}
       {activePath === '/admin/settings' && isAdmin && <Settings boot={boot} refresh={refresh} />}
     </main>
@@ -664,6 +667,63 @@ function Categories() {
       </div>{!loading && !items.length && <p className="hint">No categories yet.</p>}</div>
     </div>
   </section>;
+}
+
+function Logbook() {
+  const [entries, setEntries] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    api('/api/admin/logbook')
+      .then((data) => {
+        if (!active) return;
+        setEntries(data.entries || []);
+        setError('');
+      })
+      .catch((err) => {
+        if (active) setError(err.message);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
+
+  return <section>
+    <Head title="Logbook" text="Audit history for portal content, users, categories and visibility changes." />
+    {error && <ErrorBox text={error} />}
+    <div className="card logbook-card">
+      <div className="logbook-table" role="table" aria-label="Portal logbook" aria-busy={loading}>
+        <div className="logbook-row logbook-head" role="row">
+          <div role="columnheader">Action</div>
+          <div role="columnheader">Affected entity</div>
+          <div role="columnheader">User</div>
+          <div role="columnheader">Action taken at</div>
+        </div>
+        {loading ? <LogbookSkeleton /> : entries.map((entry) => <div className="logbook-row" role="row" key={entry.id}>
+          <div role="cell"><b>{entry.action}</b></div>
+          <div role="cell" className="logbook-entity">
+            {entry.entityId ? <><code>{entry.entityId}</code><span>{entry.entityLabel}</span></> : <span>{entry.entityLabel}</span>}
+          </div>
+          <div role="cell">{entry.userEmail}</div>
+          <div role="cell"><time dateTime={entry.createdAt}>{new Date(entry.createdAt).toLocaleString()}</time></div>
+        </div>)}
+      </div>
+      {!loading && !entries.length && !error && <div className="empty">No logbook entries yet.</div>}
+    </div>
+  </section>;
+}
+
+function LogbookSkeleton() {
+  return <>{Array.from({ length: 6 }, (_, index) => <div className="logbook-row" role="row" key={index} aria-hidden="true">
+    <div><Skeleton width="120px" height="15px" /></div>
+    <div><Skeleton width="90%" height="15px" /></div>
+    <div><Skeleton width="150px" height="15px" /></div>
+    <div><Skeleton width="145px" height="15px" /></div>
+  </div>)}</>;
 }
 
 function Users({ boot, refresh }) {
