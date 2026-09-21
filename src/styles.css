@@ -240,3 +240,7 @@
 .article-code-block .token.italic{font-style:italic}
 .article-code-block .token.entity{cursor:help}
 .article-code-disclosure.syntax-highlighted .article-code-summary{color:#353a34}
+
+.category-visibility-hint{margin-top:-.35rem}
+.category-record-title{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+.category-hidden-badge{display:inline-flex;align-items:center;padding:.18rem .45rem;border:1px solid #d4d6cf;border-radius:999px;background:#f1f1ed;color:#666c64;font-size:.7rem;font-weight:800;line-height:1}
