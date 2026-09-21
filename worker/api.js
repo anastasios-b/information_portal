@@ -5,6 +5,8 @@ const STORE_KEYS = {
   categories: 'db/article-categories.json',
   settings: 'db/settings.json',
   logbook: 'db/logbook.json',
+  announcements: 'db/announcements.json',
+  comments: 'db/comments.json',
 };
 const ARTICLE_IMAGE_PREFIX = 'article-images/';
 const MAX_ARTICLE_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -44,6 +46,10 @@ export async function handleApiRequest(request, env, ctx) {
       return json({ ok: true }, 200, { 'Set-Cookie': expiredSessionCookie(request) });
     }
 
+    if (method === 'GET' && parts[0] === 'content' && parts.length === 1) {
+      return await getContent(request, env, url.searchParams.get('manage') === '1');
+    }
+
     if (parts[0] === 'article-images') {
       if (method === 'GET' && parts.length === 1) return await listArticleImages(request, env);
       if (method === 'POST' && parts.length === 1) return await uploadArticleImage(request, env);
@@ -52,6 +58,7 @@ export async function handleApiRequest(request, env, ctx) {
 
     if (parts[0] === 'articles') {
       if (method === 'GET' && parts.length === 1) return await listArticles(request, env, url.searchParams.get('manage') === '1');
+      if (method === 'POST' && parts.length === 3 && parts[2] === 'comments') return await addArticleComment(request, env, parts[1]);
       if (method === 'GET' && parts.length === 2) return await getArticle(request, env, parts[1]);
       if (method === 'POST' && parts.length === 1) return await saveArticle(request, env, ctx);
       if (method === 'PUT' && parts.length === 2) return await saveArticle(request, env, ctx, parts[1]);
@@ -63,6 +70,13 @@ export async function handleApiRequest(request, env, ctx) {
       if (method === 'POST' && parts.length === 1) return await saveCategory(request, env, ctx);
       if (method === 'PUT' && parts.length === 2) return await saveCategory(request, env, ctx, parts[1]);
       if (method === 'DELETE' && parts.length === 2) return await deleteCategory(request, env, ctx, parts[1]);
+    }
+
+    if (parts[0] === 'announcements') {
+      if (method === 'GET' && parts.length === 1) return await listAnnouncements(request, env, url.searchParams.get('manage') === '1');
+      if (method === 'POST' && parts.length === 1) return await saveAnnouncement(request, env);
+      if (method === 'PUT' && parts.length === 2) return await saveAnnouncement(request, env, parts[1]);
+      if (method === 'DELETE' && parts.length === 2) return await deleteAnnouncement(request, env, parts[1]);
     }
 
     if (method === 'GET' && parts[0] === 'admin' && parts[1] === 'logbook' && parts.length === 2) {
@@ -123,6 +137,7 @@ async function bootstrap(request, env) {
 
 async function setup(request, env) {
   const input = await jsonBody(request);
+  const fullName = validateFullName(input.fullName);
   const email = normalizeEmail(input.email);
   const password = validatePassword(input.password);
   if (env.BOOTSTRAP_TOKEN && input.bootstrapToken !== env.BOOTSTRAP_TOKEN) {
@@ -134,6 +149,7 @@ async function setup(request, env) {
     const now = new Date().toISOString();
     const created = {
       id: crypto.randomUUID(),
+      fullName,
       email,
       role: 'administrator',
       password: await hashPassword(password),
@@ -151,6 +167,7 @@ async function setup(request, env) {
 
 async function login(request, env) {
   const input = await jsonBody(request);
+  const fullName = validateFullName(input.fullName);
   const email = normalizeEmail(input.email);
   const password = String(input.password ?? '');
   const { data: usersStore } = await readStore(env, 'users');
@@ -275,17 +292,157 @@ async function getArticleImage(request, env, reference) {
   return new Response(object.body, { status: 200, headers });
 }
 
+async function getContent(request, env, manage) {
+  const { data: settings } = await readStore(env, 'settings');
+  let user = null;
+
+  if (manage) {
+    ({ user } = await authenticate(request, env, ['administrator', 'editor']));
+  } else if (settings.mode === 'private') {
+    ({ user } = await authenticate(request, env, ['administrator', 'editor', 'reader']));
+  }
+
+  const storeReads = [
+    readStore(env, 'articles'),
+    readStore(env, 'categories'),
+    readStore(env, 'announcements'),
+  ];
+  if (!manage && settings.mode === 'private') storeReads.push(readStore(env, 'comments'));
+
+  const stores = await Promise.all(storeReads);
+  const articleStore = stores[0].data;
+  const categoryStore = stores[1].data;
+  const announcementStore = stores[2].data;
+  const commentStore = stores[3]?.data;
+
+  const articles = sortArticles(
+    manage ? articleStore.articles : articleStore.articles.filter((article) => article.status === 'published'),
+  ).map(publicArticle);
+
+  const now = Date.now();
+  const announcements = sortAnnouncements(
+    manage
+      ? announcementStore.announcements
+      : announcementStore.announcements.filter((announcement) => isAnnouncementActive(announcement, now)),
+  );
+
+  const visibleArticleIds = new Set(articles.map((article) => article.id));
+  const comments = settings.mode === 'private' && !manage
+    ? sortComments((commentStore?.comments || []).filter((comment) => visibleArticleIds.has(comment.articleId)))
+    : [];
+
+  return json({
+    mode: settings.mode,
+    user: user ? publicUser(user) : null,
+    articles,
+    categories: sortCategories(categoryStore.categories),
+    announcements,
+    comments,
+  });
+}
+
+async function listAnnouncements(request, env, manage) {
+  if (manage) {
+    await authenticate(request, env, ['administrator', 'editor']);
+    const { data: store } = await readStore(env, 'announcements');
+    return json({ announcements: sortAnnouncements(store.announcements) });
+  }
+
+  const { data: settings } = await readStore(env, 'settings');
+  if (settings.mode === 'private') await authenticate(request, env, ['administrator', 'editor', 'reader']);
+  const { data: store } = await readStore(env, 'announcements');
+  const now = Date.now();
+  return json({ announcements: sortAnnouncements(store.announcements.filter((announcement) => isAnnouncementActive(announcement, now))) });
+}
+
+async function saveAnnouncement(request, env, id = null) {
+  if (id) assertUuid(id);
+  const { user } = await authenticate(request, env, ['administrator', 'editor']);
+  const input = validateAnnouncement(await jsonBody(request));
+
+  const announcement = await mutateStore(env, 'announcements', (store) => {
+    const now = new Date().toISOString();
+    if (id) {
+      const existing = store.announcements.find((item) => item.id === id);
+      if (!existing) throw new ApiError(404, 'Announcement not found', 'ANNOUNCEMENT_NOT_FOUND');
+      Object.assign(existing, input, { updatedAt: now, updatedById: user.id });
+      return existing;
+    }
+    const created = {
+      id: crypto.randomUUID(),
+      ...input,
+      createdById: user.id,
+      updatedById: user.id,
+      createdAt: now,
+      updatedAt: now,
+    };
+    store.announcements.push(created);
+    return created;
+  });
+
+  return json({ announcement }, id ? 200 : 201);
+}
+
+async function deleteAnnouncement(request, env, id) {
+  assertUuid(id);
+  await authenticate(request, env, ['administrator', 'editor']);
+  await mutateStore(env, 'announcements', (store) => {
+    const index = store.announcements.findIndex((item) => item.id === id);
+    if (index < 0) throw new ApiError(404, 'Announcement not found', 'ANNOUNCEMENT_NOT_FOUND');
+    store.announcements.splice(index, 1);
+  });
+  return json({ ok: true });
+}
+
+async function addArticleComment(request, env, articleId) {
+  assertUuid(articleId);
+  const { data: settings } = await readStore(env, 'settings');
+  if (settings.mode !== 'private') {
+    throw new ApiError(403, 'Comments are available only while the portal is private', 'COMMENTS_PRIVATE_ONLY');
+  }
+
+  const { user } = await authenticate(request, env, ['administrator', 'editor', 'reader']);
+  const { data: articleStore } = await readStore(env, 'articles');
+  const article = articleStore.articles.find((item) => item.id === articleId);
+  if (!article) throw new ApiError(404, 'Article not found', 'ARTICLE_NOT_FOUND');
+  if (article.status === 'draft' && !['administrator', 'editor'].includes(user.role)) {
+    throw new ApiError(403, 'Insufficient permissions', 'FORBIDDEN');
+  }
+
+  const input = await jsonBody(request);
+  const content = String(input.content || '').trim();
+  if (!content || content.length > 4000) {
+    throw new ApiError(400, 'Comment is required and must be at most 4000 characters', 'INVALID_COMMENT');
+  }
+
+  const comment = await mutateStore(env, 'comments', (store) => {
+    const created = {
+      id: crypto.randomUUID(),
+      articleId,
+      userId: user.id,
+      userFullName: String(user.fullName || '').trim() || user.email,
+      userEmail: user.email,
+      content,
+      createdAt: new Date().toISOString(),
+    };
+    store.comments.push(created);
+    return created;
+  });
+
+  return json({ comment }, 201);
+}
+
 async function listArticles(request, env, manage) {
   if (manage) {
     await authenticate(request, env, ['administrator', 'editor']);
     const { data: articleStore } = await readStore(env, 'articles');
-    return json({ articles: sortArticles(articleStore.articles) });
+    return json({ articles: sortArticles(articleStore.articles).map(publicArticle) });
   }
 
   const { data: settings } = await readStore(env, 'settings');
   if (settings.mode === 'private') await authenticate(request, env, ['administrator', 'editor', 'reader']);
   const { data: articleStore } = await readStore(env, 'articles');
-  return json({ articles: sortArticles(articleStore.articles.filter((article) => article.status === 'published')) });
+  return json({ articles: sortArticles(articleStore.articles.filter((article) => article.status === 'published')).map(publicArticle) });
 }
 
 async function getArticle(request, env, id) {
@@ -300,7 +457,7 @@ async function getArticle(request, env, id) {
     const { data: settings } = await readStore(env, 'settings');
     if (settings.mode === 'private') await authenticate(request, env, ['administrator', 'editor', 'reader']);
   }
-  return json({ article });
+  return json({ article: publicArticle(article) });
 }
 
 async function saveArticle(request, env, ctx, id = null) {
@@ -324,14 +481,17 @@ async function saveArticle(request, env, ctx, id = null) {
           existing.summary !== input.summary ? { field: 'Summary', value: existing.summary } : null,
           existing.content !== input.content ? { field: 'Content', value: existing.content } : null,
           existing.status !== input.status ? { field: 'Status', value: existing.status } : null,
-          existing.categoryId !== input.categoryId ? {
-            field: 'Category',
-            value: categoryStore.categories.find((category) => category.id === existing.categoryId)?.name || 'Unknown category',
-            referenceId: existing.categoryId,
+          !sameStringArray(articleCategoryIds(existing), input.categoryIds) ? {
+            field: 'Categories',
+            value: articleCategoryIds(existing)
+              .map((categoryId) => categoryStore.categories.find((category) => category.id === categoryId)?.name || 'Unknown category')
+              .join(', ') || 'Uncategorized',
+            referenceIds: articleCategoryIds(existing),
           } : null,
         ].filter(Boolean),
       };
       Object.assign(existing, input, { updatedAt: now, updatedById: user.id });
+      delete existing.categoryId;
       return existing;
     }
     const created = {
@@ -356,7 +516,7 @@ async function saveArticle(request, env, ctx, id = null) {
     userEmail: user.email,
   });
 
-  return json({ article }, id ? 200 : 201);
+  return json({ article: publicArticle(article) }, id ? 200 : 201);
 }
 
 async function deleteArticle(request, env, ctx, id) {
@@ -441,7 +601,7 @@ async function deleteCategory(request, env, ctx, id) {
   assertUuid(id);
   const { user } = await authenticate(request, env, ['administrator', 'editor']);
   const { data: articleStore } = await readStore(env, 'articles');
-  if (articleStore.articles.some((article) => article.categoryId === id)) {
+  if (articleStore.articles.some((article) => articleCategoryIds(article).includes(id))) {
     throw new ApiError(409, 'Category is used by one or more articles', 'CATEGORY_IN_USE');
   }
 
@@ -500,6 +660,7 @@ async function saveUser(request, env, ctx, id = null) {
       if (existing.role === 'administrator' && role !== 'administrator' && adminCount(store.users) <= 1) {
         throw new ApiError(409, 'The system must always have at least one administrator', 'LAST_ADMIN_REQUIRED');
       }
+      existing.fullName = fullName;
       existing.email = email;
       existing.role = role;
       existing.updatedAt = now;
@@ -512,6 +673,7 @@ async function saveUser(request, env, ctx, id = null) {
 
     const created = {
       id: crypto.randomUUID(),
+      fullName,
       email,
       role,
       password: await hashPassword(password),
@@ -606,6 +768,8 @@ function createStore(name) {
   if (name === 'categories') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, categories: [], createdAt: now, updatedAt: now };
   if (name === 'settings') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, mode: 'private', updatedAt: now, updatedById: null };
   if (name === 'logbook') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, entries: [], createdAt: now, updatedAt: now };
+  if (name === 'announcements') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, announcements: [], createdAt: now, updatedAt: now };
+  if (name === 'comments') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, comments: [], createdAt: now, updatedAt: now };
   throw new Error('Unknown store');
 }
 
@@ -641,7 +805,7 @@ function storeFromLegacy(name, legacy) {
     };
   }
 
-  if (name === 'logbook') return createStore('logbook');
+  if (name === 'logbook' || name === 'announcements' || name === 'comments') return createStore(name);
 
   if (name === 'settings') {
     return {
@@ -666,8 +830,8 @@ async function readStore(env, name) {
       return { data, etag: object.etag };
     }
 
-    const data = name === 'logbook'
-      ? createStore('logbook')
+    const data = ['logbook', 'announcements', 'comments'].includes(name)
+      ? createStore(name)
       : (() => null)();
 
     let migrated = data;
@@ -724,16 +888,19 @@ function validateStore(name, data) {
   if (name === 'users') {
     if (!Array.isArray(data.users)) throw new ApiError(500, 'Portal users data is invalid', 'INVALID_DATABASE');
     for (const user of data.users) {
-      if (!isUuid(user.id) || !isUuid(user.sessionNonce) || !ROLES.has(user.role) || typeof user.email !== 'string') {
+      const fullNameValid = user.fullName === undefined || typeof user.fullName === 'string';
+      if (!isUuid(user.id) || !isUuid(user.sessionNonce) || !ROLES.has(user.role) || typeof user.email !== 'string' || !fullNameValid) {
         throw new ApiError(500, 'Portal users data is invalid', 'INVALID_DATABASE');
       }
     }
   } else if (name === 'articles') {
     if (!Array.isArray(data.articles)) throw new ApiError(500, 'Portal articles data is invalid', 'INVALID_DATABASE');
     for (const article of data.articles) {
-      const categoryValid = article.categoryId == null || isUuid(article.categoryId);
+      const legacyCategoryValid = article.categoryId == null || isUuid(article.categoryId);
+      const categoriesValid = article.categoryIds === undefined ||
+        (Array.isArray(article.categoryIds) && article.categoryIds.length > 0 && article.categoryIds.every(isUuid));
       if (!isUuid(article.id) || !isUuid(article.authorId) || !isUuid(article.updatedById) ||
-          !ARTICLE_STATUSES.has(article.status) || !categoryValid) {
+          !ARTICLE_STATUSES.has(article.status) || !legacyCategoryValid || !categoriesValid) {
         throw new ApiError(500, 'Portal articles data is invalid', 'INVALID_DATABASE');
       }
     }
@@ -749,6 +916,24 @@ function validateStore(name, data) {
     if (data.updatedById !== null && data.updatedById !== undefined && !isUuid(data.updatedById)) {
       throw new ApiError(500, 'Portal settings data is invalid', 'INVALID_DATABASE');
     }
+  } else if (name === 'announcements') {
+    if (!Array.isArray(data.announcements)) throw new ApiError(500, 'Portal announcements data is invalid', 'INVALID_DATABASE');
+    for (const announcement of data.announcements) {
+      if (!isUuid(announcement.id) || typeof announcement.title !== 'string' || typeof announcement.content !== 'string' ||
+          typeof announcement.startAt !== 'string' || (announcement.endAt !== null && typeof announcement.endAt !== 'string') ||
+          !isUuid(announcement.createdById) || !isUuid(announcement.updatedById)) {
+        throw new ApiError(500, 'Portal announcements data is invalid', 'INVALID_DATABASE');
+      }
+    }
+  } else if (name === 'comments') {
+    if (!Array.isArray(data.comments)) throw new ApiError(500, 'Portal comments data is invalid', 'INVALID_DATABASE');
+    for (const comment of data.comments) {
+      if (!isUuid(comment.id) || !isUuid(comment.articleId) || !isUuid(comment.userId) ||
+          typeof comment.userFullName !== 'string' || typeof comment.userEmail !== 'string' ||
+          typeof comment.content !== 'string' || typeof comment.createdAt !== 'string') {
+        throw new ApiError(500, 'Portal comments data is invalid', 'INVALID_DATABASE');
+      }
+    }
   } else if (name === 'logbook') {
     if (!Array.isArray(data.entries)) throw new ApiError(500, 'Portal logbook data is invalid', 'INVALID_DATABASE');
     for (const entry of data.entries) {
@@ -757,7 +942,8 @@ function validateStore(name, data) {
       const previousFieldsValid = entry.previousFields === undefined || entry.previousFields === null ||
         (Array.isArray(entry.previousFields) && entry.previousFields.every((field) =>
           field && typeof field.field === 'string' && typeof field.value === 'string' &&
-          (field.referenceId === undefined || field.referenceId === null || isUuid(field.referenceId))
+          (field.referenceId === undefined || field.referenceId === null || isUuid(field.referenceId)) &&
+          (field.referenceIds === undefined || (Array.isArray(field.referenceIds) && field.referenceIds.every(isUuid)))
         ));
       if (!isUuid(entry.id) || typeof entry.action !== 'string' || typeof entry.entityLabel !== 'string' ||
           (entry.entityId !== null && !isUuid(entry.entityId)) || !previousIdValid || !previousLabelValid || !previousFieldsValid ||
@@ -805,6 +991,13 @@ function scheduleLogEntry(ctx, env, {
 
 function sortArticles(articles) { return [...articles].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
 function sortCategories(categories) { return [...categories].sort((a, b) => a.name.localeCompare(b.name)); }
+function sortAnnouncements(announcements) { return [...announcements].sort((a, b) => b.startAt.localeCompare(a.startAt)); }
+function sortComments(comments) { return [...comments].sort((a, b) => a.createdAt.localeCompare(b.createdAt)); }
+function isAnnouncementActive(announcement, now = Date.now()) {
+  const start = Date.parse(announcement.startAt);
+  const end = announcement.endAt ? Date.parse(announcement.endAt) : Infinity;
+  return Number.isFinite(start) && start <= now && now <= end;
+}
 function adminCount(users) { return users.filter((user) => user.role === 'administrator').length; }
 function userFromSession(users, session) {
   const user = users.find((item) => item.id === session.uid);
@@ -816,7 +1009,31 @@ function requireRole(user, allowedRoles) {
   return user;
 }
 function publicUser(user) {
-  return { id: user.id, email: user.email, role: user.role, createdAt: user.createdAt, updatedAt: user.updatedAt };
+  return {
+    id: user.id,
+    fullName: String(user.fullName || '').trim() || user.email,
+    email: user.email,
+    role: user.role,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+  };
+}
+
+function articleCategoryIds(article) {
+  if (Array.isArray(article.categoryIds)) return [...new Set(article.categoryIds.filter(isUuid))];
+  return isUuid(article.categoryId) ? [article.categoryId] : [];
+}
+
+function publicArticle(article) {
+  const { categoryId, ...rest } = article;
+  return { ...rest, categoryIds: articleCategoryIds(article) };
+}
+
+function sameStringArray(left, right) {
+  if (left.length !== right.length) return false;
+  const a = [...left].sort();
+  const b = [...right].sort();
+  return a.every((value, index) => value === b[index]);
 }
 
 async function createSessionToken(user, env) {
@@ -911,6 +1128,14 @@ async function jsonBody(request) {
   catch { throw new ApiError(400, 'Invalid JSON body', 'INVALID_JSON'); }
 }
 
+function validateFullName(value) {
+  const fullName = String(value || '').trim();
+  if (!fullName || fullName.length > 120) {
+    throw new ApiError(400, 'Full name is required and must be at most 120 characters', 'INVALID_FULL_NAME');
+  }
+  return fullName;
+}
+
 function normalizeEmail(value) {
   const email = String(value || '').trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
@@ -929,6 +1154,19 @@ function validateRole(value) {
   if (!ROLES.has(value)) throw new ApiError(400, 'Invalid role', 'INVALID_ROLE');
   return value;
 }
+function validateAnnouncement(input) {
+  const title = String(input.title || '').trim();
+  const content = String(input.content || '').trim();
+  const start = new Date(input.startAt);
+  const end = input.endAt ? new Date(input.endAt) : null;
+  if (!title || title.length > 160) throw new ApiError(400, 'Announcement title is required and must be at most 160 characters', 'INVALID_ANNOUNCEMENT_TITLE');
+  if (!content || content.length > 4000) throw new ApiError(400, 'Announcement content is required and must be at most 4000 characters', 'INVALID_ANNOUNCEMENT_CONTENT');
+  if (!Number.isFinite(start.getTime())) throw new ApiError(400, 'Valid announcement start date is required', 'INVALID_ANNOUNCEMENT_START');
+  if (end && !Number.isFinite(end.getTime())) throw new ApiError(400, 'Announcement end date is invalid', 'INVALID_ANNOUNCEMENT_END');
+  if (end && end.getTime() < start.getTime()) throw new ApiError(400, 'Announcement end date must be after its start date', 'INVALID_ANNOUNCEMENT_END');
+  return { title, content, startAt: start.toISOString(), endAt: end ? end.toISOString() : null };
+}
+
 function validateCategory(input) {
   const name = String(input.name || '').trim();
   if (!name || name.length > 80) {
@@ -941,16 +1179,19 @@ function validateArticle(input, categories) {
   const summary = String(input.summary || '').trim();
   const content = String(input.content || '').trim();
   const status = String(input.status || 'draft');
-  const categoryId = String(input.categoryId || '');
+  const rawCategoryIds = Array.isArray(input.categoryIds)
+    ? input.categoryIds
+    : input.categoryId ? [input.categoryId] : [];
+  const categoryIds = [...new Set(rawCategoryIds.map((value) => String(value || '')))];
   if (!title || title.length > 200) throw new ApiError(400, 'Title is required and must be at most 200 characters', 'INVALID_TITLE');
   if (summary.length > 600) throw new ApiError(400, 'Summary must be at most 600 characters', 'INVALID_SUMMARY');
   if (!content || content.length > 1_000_000) throw new ApiError(400, 'Article content is required and must be at most 1 MB', 'INVALID_CONTENT');
   validateInlineImageTokens(content);
   if (!ARTICLE_STATUSES.has(status)) throw new ApiError(400, 'Invalid article status', 'INVALID_ARTICLE_STATUS');
-  if (!isUuid(categoryId) || !categories.some((category) => category.id === categoryId)) {
-    throw new ApiError(400, 'A valid article category is required', 'INVALID_CATEGORY');
+  if (!categoryIds.length || categoryIds.some((categoryId) => !isUuid(categoryId) || !categories.some((category) => category.id === categoryId))) {
+    throw new ApiError(400, 'At least one valid article category is required', 'INVALID_CATEGORY');
   }
-  return { title, summary, content, status, categoryId };
+  return { title, summary, content, status, categoryIds };
 }
 
 function validateInlineImageTokens(content) {
