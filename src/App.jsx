@@ -283,8 +283,7 @@ function Admin({ path, boot, refresh }) {
   const isAllowedRoute =
     isArticleRoute ||
     path === '/admin/categories' ||
-    path === '/admin/logbook' ||
-    (isAdmin && (path === '/admin/users' || path === '/admin/settings'));
+    (isAdmin && (path === '/admin/logbook' || path === '/admin/users' || path === '/admin/settings'));
 
   useEffect(() => {
     if (path === '/admin') navigate('/admin/articles', { replace: true });
@@ -305,7 +304,7 @@ function Admin({ path, boot, refresh }) {
       <nav>
         <NavButton path="/admin/articles" current={activePath}>Articles</NavButton>
         <NavButton path="/admin/categories" current={activePath}>Article Categories</NavButton>
-        <NavButton path="/admin/logbook" current={activePath}>Logbook</NavButton>
+        {isAdmin && <NavButton path="/admin/logbook" current={activePath}>Logbook</NavButton>}
         {isAdmin && <NavButton path="/admin/users" current={activePath}>Users</NavButton>}
         {isAdmin && <NavButton path="/admin/settings" current={activePath}>Settings</NavButton>}
       </nav>
@@ -319,7 +318,7 @@ function Admin({ path, boot, refresh }) {
     <main className="admin">
       {activePath === '/admin/articles' && <Articles path={path} />}
       {activePath === '/admin/categories' && <Categories />}
-      {activePath === '/admin/logbook' && <Logbook />}
+      {activePath === '/admin/logbook' && isAdmin && <Logbook />}
       {activePath === '/admin/users' && isAdmin && <Users boot={boot} refresh={refresh} />}
       {activePath === '/admin/settings' && isAdmin && <Settings boot={boot} refresh={refresh} />}
     </main>
