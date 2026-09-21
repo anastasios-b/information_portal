@@ -2,6 +2,7 @@ const LEGACY_DB_KEY = 'db/information-portal.json';
 const STORE_KEYS = {
   users: 'db/users.json',
   articles: 'db/articles.json',
+  initialArticles: 'db/articles-initial.json',
   categories: 'db/article-categories.json',
   settings: 'db/settings.json',
   logbook: 'db/logbook.json',
@@ -16,6 +17,7 @@ const SESSION_TTL_SECONDS = 12 * 60 * 60;
 const PBKDF2_ITERATIONS = 60000;
 const STORE_SCHEMA_VERSION = 1;
 const DEFAULT_PORTAL_NAME = 'Information Portal';
+const DEFAULT_INITIAL_ARTICLES = 12;
 const ROLES = new Set(['administrator', 'editor', 'reader']);
 const ARTICLE_STATUSES = new Set(['draft', 'published']);
 const encoder = new TextEncoder();
@@ -48,7 +50,12 @@ export async function handleApiRequest(request, env, ctx) {
     }
 
     if (method === 'GET' && parts[0] === 'content' && parts.length === 1) {
-      return await getContent(request, env, url.searchParams.get('manage') === '1');
+      return await getContent(
+        request,
+        env,
+        url.searchParams.get('manage') === '1',
+        url.searchParams.get('initial') === '1',
+      );
     }
 
     if (parts[0] === 'article-images') {
@@ -134,6 +141,7 @@ async function bootstrap(request, env) {
     setupTokenRequired: Boolean(env.BOOTSTRAP_TOKEN),
     mode: settings.mode,
     portalName: portalName(settings),
+    initialArticles: initialArticlesCount(settings),
     user: user ? publicUser(user) : null,
     adminCount: adminCount(usersStore.users),
   });
