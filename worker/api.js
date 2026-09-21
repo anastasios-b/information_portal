@@ -167,7 +167,6 @@ async function setup(request, env) {
 
 async function login(request, env) {
   const input = await jsonBody(request);
-  const fullName = validateFullName(input.fullName);
   const email = normalizeEmail(input.email);
   const password = String(input.password ?? '');
   const { data: usersStore } = await readStore(env, 'users');
@@ -639,6 +638,7 @@ async function saveUser(request, env, ctx, id = null) {
   if (id) assertUuid(id);
   const { session, user: actingUser } = await authenticate(request, env, ['administrator']);
   const input = await jsonBody(request);
+  const fullName = validateFullName(input.fullName);
   const email = normalizeEmail(input.email);
   const role = validateRole(input.role);
   const password = input.password ? validatePassword(input.password) : null;
