@@ -1,24 +1,38 @@
 const contentRequests = new Map();
-export async function uploadArticleImage(file) {
-  return request('/api/article-images', {
-    method: 'POST',
-    body: file,
+
+async function request(path, options = {}) {
+  const response = await fetch(path, {
+    credentials: 'same-origin',
+    ...options,
+    cache: 'no-store',
     headers: {
-      'Content-Type': file.type,
-      'X-Article-Image-Filename': encodeURIComponent(file.name),
+      ...(typeof options.body === 'string' ? { 'Content-Type': 'application/json' } : {}),
+      ...(options.headers || {}),
     },
   });
+
+  const contentType = response.headers.get('content-type') || '';
+  const isJson = contentType.includes('application/json');
+  const payload = isJson
+    ? await response.json()
+    : { message: `Server request failed (HTTP ${response.status})` };
+
+  if (!response.ok) {
+    let message = payload.error || payload.message || `Request failed (HTTP ${response.status})`;
+    if (response.status >= 500 && payload.code) message += ` [${payload.code}]`;
+    const error = new Error(message);
+    error.status = response.status;
+    error.code = payload.code;
+    error.requestId = payload.requestId;
+    throw error;
+  }
+
+  return payload;
 }
 
-export function articleImageUrl(filename) {
-  return `/api/article-images/${encodeURIComponent(filename)}`;
+export function api(path, options = {}) {
+  return request(path, options);
 }
-
-
-export function listArticleImages() {
-  return request('/api/article-images', { method: 'GET' });
-}
-
 
 export function loadContentOnce(cacheKey, { manage = false } = {}) {
   const key = `${cacheKey}:${manage ? 'manage' : 'portal'}`;
@@ -35,4 +49,23 @@ export function loadContentOnce(cacheKey, { manage = false } = {}) {
 
 export function resetContentRequests() {
   contentRequests.clear();
+}
+
+export async function uploadArticleImage(file) {
+  return request('/api/article-images', {
+    method: 'POST',
+    body: file,
+    headers: {
+      'Content-Type': file.type,
+      'X-Article-Image-Filename': encodeURIComponent(file.name),
+    },
+  });
+}
+
+export function articleImageUrl(filename) {
+  return `/api/article-images/${encodeURIComponent(filename)}`;
+}
+
+export function listArticleImages() {
+  return request('/api/article-images', { method: 'GET' });
 }
