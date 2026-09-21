@@ -304,9 +304,9 @@ function Admin({ path, boot, refresh }) {
       <nav>
         <NavButton path="/admin/articles" current={activePath}>Articles</NavButton>
         <NavButton path="/admin/categories" current={activePath}>Article Categories</NavButton>
-        {isAdmin && <NavButton path="/admin/logbook" current={activePath}>Logbook</NavButton>}
         {isAdmin && <NavButton path="/admin/users" current={activePath}>Users</NavButton>}
         {isAdmin && <NavButton path="/admin/settings" current={activePath}>Settings</NavButton>}
+        {isAdmin && <NavButton path="/admin/logbook" current={activePath}>Logbook</NavButton>}
       </nav>
       <footer>
         <span>{boot.user.email}</span><span>{boot.user.role}</span>
