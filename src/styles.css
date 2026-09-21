@@ -90,6 +90,8 @@
 .article-live-preview{position:sticky;top:1.25rem;max-height:calc(100vh - 2.5rem);overflow:auto}
 .live-preview-head{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:1rem}
 .live-preview-head h2{margin:.2rem 0 0}
+.live-preview-actions{display:flex;align-items:center;justify-content:flex-end;gap:.55rem;flex-wrap:wrap}
+.live-preview-link{min-height:32px;padding:.38rem .62rem;font-size:.78rem}
 .preview-document{box-shadow:none}
 .preview-document h1{font-size:clamp(1.8rem,3vw,2.8rem)}
 .preview-empty{margin:0;color:#8a8f86;font-style:italic}
