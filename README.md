@@ -14,26 +14,23 @@ React information portal deployed as one Cloudflare Worker with Static Assets an
 
 ## Portal content loading
 
-Portal content is loaded through one aggregate endpoint:
+Portal article loading is staged:
 
 ```text
+GET /api/content?initial=1
 GET /api/content
 GET /api/content?manage=1
 ```
 
-The React application memoizes that request in memory for the current visibility/user scope. Home and article navigation reuse the same loaded articles, categories, active announcements, and private-mode comments instead of querying those resources again. Administrative article/category/announcement mutations patch the already-loaded client state directly.
+The first portal response reads `db/articles-initial.json` and renders immediately. The full portal content request then runs in the background and replaces the initial article set when complete. Search uses the currently loaded set, so it works against the initial articles immediately and automatically expands to all portal-visible articles when the background load finishes.
 
-A visibility or authentication scope change creates a new content scope and performs one fresh aggregate load because the permitted dataset can change.
+`db/articles.json` remains the canonical article database. `db/articles-initial.json` is a derived homepage index containing the newest published, visible articles by `createdAt`. Its size is controlled by the administrator setting **Initial Articles**, which defaults to 12. The derived index is refreshed when articles change, category visibility changes, or the Initial Articles setting changes.
+
+Management content always loads the complete article database.
 
 Normal `api()` requests use browser `cache: "no-store"`.
 
-Search and category filtering are entirely client-side after the initial content load:
-
-- live text search across title, summary, article body, and every attached category
-- category dropdown
-- combined search + category filtering
-- live result count
-- no API request on each keystroke
+Search is centered in the persistent portal header and is available on the homepage and article pages. It searches title, summary, article body, and attached categories, shows up to five dropdown results, and shows **View all results** when more matches exist. The homepage category filter remains client-side.
 
 ## R2 database layout
 
@@ -42,6 +39,7 @@ The portal uses independent R2 JSON objects:
 ```text
 db/users.json
 db/articles.json
+db/articles-initial.json
 db/article-categories.json
 db/settings.json
 db/logbook.json
@@ -253,3 +251,8 @@ Article categories can be marked **Hidden** by administrators or editors.
 - If an article belongs to both hidden and visible categories, it remains visible and only its visible category associations are exposed in portal-facing responses.
 - Management views continue to show hidden categories and their articles.
 - Existing categories without a stored `hidden` value are treated as visible.
+
+
+## Homepage settings
+
+Administrators can edit the homepage hero label, title, and description in **Settings**. The same settings area controls **Initial Articles**.
