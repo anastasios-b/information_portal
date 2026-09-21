@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Prism from 'prismjs';
 import 'prismjs/components/prism-bash';
+import 'prismjs/components/prism-docker';
+import 'prismjs/components/prism-yaml';
 import 'prismjs/components/prism-markup-templating';
 import 'prismjs/components/prism-php';
 import 'prismjs/components/prism-sql';
@@ -15,6 +17,12 @@ const CODE_LANGUAGES = {
   bash: { prism: 'bash', label: 'Bash' },
   sh: { prism: 'bash', label: 'Bash' },
   shell: { prism: 'bash', label: 'Bash' },
+  docker: { prism: 'docker', label: 'Dockerfile' },
+  dockerfile: { prism: 'docker', label: 'Dockerfile' },
+  kubernetes: { prism: 'yaml', label: 'Kubernetes' },
+  k8s: { prism: 'yaml', label: 'Kubernetes' },
+  yaml: { prism: 'yaml', label: 'YAML' },
+  yml: { prism: 'yaml', label: 'YAML' },
   php: { prism: 'php', label: 'PHP' },
   sql: { prism: 'sql', label: 'SQL' },
   python: { prism: 'python', label: 'Python' },
