@@ -7,6 +7,7 @@ React information portal deployed as one Cloudflare Worker with Static Assets an
 - `/admin` redirects to `/admin/articles`
 - `/admin/articles`
 - `/admin/categories`
+- `/admin/logbook` (administrators only)
 - `/admin/users`
 - `/admin/settings`
 
@@ -176,3 +177,8 @@ GET  /api/article-images/:filename
 Uploads send the original filename separately from the binary body. Image reads follow portal visibility: private mode requires authentication; public mode allows published article images to load publicly.
 
 Legacy UUID-backed image references remain readable for existing articles, but they are not shown in the filename-based media library because their original filenames were never stored.
+
+
+## Logbook
+
+Audit entries are stored in `db/logbook.json`. Logbook access is restricted to administrators only.
