@@ -34,10 +34,15 @@ export function api(path, options = {}) {
   return request(path, options);
 }
 
-export function loadContentOnce(cacheKey, { manage = false } = {}) {
-  const key = `${cacheKey}:${manage ? 'manage' : 'portal'}`;
+export function loadContentOnce(cacheKey, { manage = false, initial = false } = {}) {
+  const variant = manage ? 'manage' : initial ? 'initial' : 'portal';
+  const key = `${cacheKey}:${variant}`;
   if (!contentRequests.has(key)) {
-    const requestPromise = request(`/api/content${manage ? '?manage=1' : ''}`, { method: 'GET' })
+    const params = new URLSearchParams();
+    if (manage) params.set('manage', '1');
+    else if (initial) params.set('initial', '1');
+    const query = params.size ? `?${params.toString()}` : '';
+    const requestPromise = request(`/api/content${query}`, { method: 'GET' })
       .catch((error) => {
         contentRequests.delete(key);
         throw error;
