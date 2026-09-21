@@ -88,6 +88,7 @@ export async function handleApiRequest(request, env, ctx) {
     if (parts[0] === 'announcements') {
       if (method === 'GET' && parts.length === 1) return await listAnnouncements(request, env, url.searchParams.get('manage') === '1');
       if (method === 'POST' && parts.length === 1) return await saveAnnouncement(request, env);
+      if (method === 'PUT' && parts.length === 2 && parts[1] === 'order') return await reorderAnnouncements(request, env);
       if (method === 'PUT' && parts.length === 2) return await saveAnnouncement(request, env, parts[1]);
       if (method === 'DELETE' && parts.length === 2) return await deleteAnnouncement(request, env, parts[1]);
     }
@@ -403,6 +404,7 @@ async function saveAnnouncement(request, env, id = null) {
     const created = {
       id: crypto.randomUUID(),
       ...input,
+      sortOrder: nextAnnouncementSortOrder(store.announcements),
       createdById: user.id,
       updatedById: user.id,
       createdAt: now,
@@ -413,6 +415,34 @@ async function saveAnnouncement(request, env, id = null) {
   });
 
   return json({ announcement }, id ? 200 : 201);
+}
+
+async function reorderAnnouncements(request, env) {
+  await authenticate(request, env, ['administrator', 'editor']);
+  const input = await jsonBody(request);
+  const ids = Array.isArray(input.ids) ? input.ids.map((value) => String(value || '')) : [];
+
+  const announcements = await mutateStore(env, 'announcements', (store) => {
+    const existingIds = store.announcements.map((announcement) => announcement.id);
+    const uniqueIds = new Set(ids);
+    if (
+      ids.length !== existingIds.length ||
+      uniqueIds.size !== ids.length ||
+      ids.some((id) => !isUuid(id) || !existingIds.includes(id))
+    ) {
+      throw new ApiError(400, 'Announcement order must include every announcement exactly once', 'INVALID_ANNOUNCEMENT_ORDER');
+    }
+
+    const order = new Map(ids.map((id, index) => [id, index]));
+    const now = new Date().toISOString();
+    for (const announcement of store.announcements) {
+      announcement.sortOrder = order.get(announcement.id);
+      announcement.updatedAt = now;
+    }
+    return sortAnnouncements(store.announcements);
+  });
+
+  return json({ announcements });
 }
 
 async function deleteAnnouncement(request, env, id) {
@@ -1284,9 +1314,11 @@ function validateStore(name, data) {
   } else if (name === 'announcements') {
     if (!Array.isArray(data.announcements)) throw new ApiError(500, 'Portal announcements data is invalid', 'INVALID_DATABASE');
     for (const announcement of data.announcements) {
+      const sortOrderValid = announcement.sortOrder === undefined ||
+        (Number.isInteger(announcement.sortOrder) && announcement.sortOrder >= 0);
       if (!isUuid(announcement.id) || typeof announcement.title !== 'string' || typeof announcement.content !== 'string' ||
           typeof announcement.startAt !== 'string' || (announcement.endAt !== null && typeof announcement.endAt !== 'string') ||
-          !isUuid(announcement.createdById) || !isUuid(announcement.updatedById)) {
+          !sortOrderValid || !isUuid(announcement.createdById) || !isUuid(announcement.updatedById)) {
         throw new ApiError(500, 'Portal announcements data is invalid', 'INVALID_DATABASE');
       }
     }
@@ -1358,7 +1390,21 @@ function scheduleLogEntry(ctx, env, {
 function sortArticles(articles) { return [...articles].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
 function sortArticlesByCreatedAt(articles) { return [...articles].sort((a, b) => b.createdAt.localeCompare(a.createdAt)); }
 function sortCategories(categories) { return [...categories].sort((a, b) => a.name.localeCompare(b.name)); }
-function sortAnnouncements(announcements) { return [...announcements].sort((a, b) => b.startAt.localeCompare(a.startAt)); }
+function sortAnnouncements(announcements) {
+  return [...announcements].sort((a, b) => {
+    const aOrdered = Number.isInteger(a.sortOrder);
+    const bOrdered = Number.isInteger(b.sortOrder);
+    if (aOrdered && bOrdered && a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+    if (aOrdered !== bOrdered) return aOrdered ? -1 : 1;
+    return b.startAt.localeCompare(a.startAt);
+  });
+}
+function nextAnnouncementSortOrder(announcements) {
+  const explicit = announcements
+    .map((announcement) => announcement.sortOrder)
+    .filter((value) => Number.isInteger(value) && value >= 0);
+  return explicit.length ? Math.max(...explicit) + 1 : announcements.length;
+}
 function sortComments(comments) { return [...comments].sort((a, b) => a.createdAt.localeCompare(b.createdAt)); }
 function isAnnouncementActive(announcement, now = Date.now()) {
   const start = Date.parse(announcement.startAt);
