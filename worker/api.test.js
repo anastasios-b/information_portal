@@ -521,6 +521,7 @@ test('multi-category articles, comments, full names and announcements work toget
       email: 'reader@example.com',
       password: 'reader-secure-password',
       role: 'reader',
+      canComment: true,
     },
   });
   assert.equal(result.response.status, 201);
@@ -666,4 +667,191 @@ test('manage content endpoint returns drafts and all announcements to editors', 
   assert.equal(result.response.status, 200);
   assert.equal(result.payload.articles[0].status, 'draft');
   assert.equal(result.payload.announcements[0].title, 'Future');
+});
+
+
+test('reader comment writing defaults off and is administrator controlled', async () => {
+  const e = env();
+  const admin = await setupAdmin(e);
+  const category = await createCategory(e, admin.cookie, 'Comments');
+
+  let result = await call(e, '/api/articles', {
+    method: 'POST',
+    cookie: admin.cookie,
+    body: {
+      title: 'Comments article',
+      summary: '',
+      content: 'Body',
+      status: 'published',
+      categoryIds: [category.id],
+    },
+  });
+  assert.equal(result.response.status, 201);
+  const article = result.payload.article;
+
+  result = await call(e, '/api/admin/users', {
+    method: 'POST',
+    cookie: admin.cookie,
+    body: {
+      fullName: 'Read Only Reader',
+      email: 'readonly@example.com',
+      password: 'reader-secure-password',
+      role: 'reader',
+    },
+  });
+  assert.equal(result.response.status, 201);
+  const reader = result.payload.user;
+  assert.equal(reader.canComment, false);
+
+  result = await call(e, '/api/login', {
+    method: 'POST',
+    body: { email: 'readonly@example.com', password: 'reader-secure-password' },
+  });
+  const readerCookie = cookieFrom(result.response);
+
+  result = await call(e, `/api/articles/${article.id}/comments`, {
+    method: 'POST',
+    cookie: readerCookie,
+    body: { content: 'Blocked comment' },
+  });
+  assert.equal(result.response.status, 403);
+  assert.equal(result.payload.code, 'COMMENT_WRITE_DISABLED');
+
+  result = await call(e, `/api/admin/users/${reader.id}`, {
+    method: 'PUT',
+    cookie: admin.cookie,
+    body: {
+      fullName: reader.fullName,
+      email: reader.email,
+      role: 'reader',
+      canComment: true,
+    },
+  });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.payload.user.canComment, true);
+
+  result = await call(e, `/api/articles/${article.id}/comments`, {
+    method: 'POST',
+    cookie: readerCookie,
+    body: { content: 'Allowed comment' },
+  });
+  assert.equal(result.response.status, 201);
+  assert.equal(result.payload.comment.content, 'Allowed comment');
+});
+
+test('users can edit and delete only their own comments', async () => {
+  const e = env();
+  const admin = await setupAdmin(e);
+  const category = await createCategory(e, admin.cookie, 'Ownership');
+
+  let result = await call(e, '/api/articles', {
+    method: 'POST',
+    cookie: admin.cookie,
+    body: {
+      title: 'Ownership article',
+      summary: '',
+      content: 'Body',
+      status: 'published',
+      categoryIds: [category.id],
+    },
+  });
+  const article = result.payload.article;
+
+  for (const [fullName, email] of [['Reader One', 'one@example.com'], ['Reader Two', 'two@example.com']]) {
+    result = await call(e, '/api/admin/users', {
+      method: 'POST',
+      cookie: admin.cookie,
+      body: {
+        fullName,
+        email,
+        password: 'reader-secure-password',
+        role: 'reader',
+        canComment: true,
+      },
+    });
+    assert.equal(result.response.status, 201);
+  }
+
+  result = await call(e, '/api/login', {
+    method: 'POST',
+    body: { email: 'one@example.com', password: 'reader-secure-password' },
+  });
+  const oneCookie = cookieFrom(result.response);
+
+  result = await call(e, '/api/login', {
+    method: 'POST',
+    body: { email: 'two@example.com', password: 'reader-secure-password' },
+  });
+  const twoCookie = cookieFrom(result.response);
+
+  result = await call(e, `/api/articles/${article.id}/comments`, {
+    method: 'POST',
+    cookie: oneCookie,
+    body: { content: 'Original' },
+  });
+  assert.equal(result.response.status, 201);
+  const comment = result.payload.comment;
+
+  result = await call(e, `/api/articles/${article.id}/comments/${comment.id}`, {
+    method: 'PUT',
+    cookie: twoCookie,
+    body: { content: 'Not mine' },
+  });
+  assert.equal(result.response.status, 403);
+  assert.equal(result.payload.code, 'COMMENT_NOT_OWNED');
+
+  result = await call(e, `/api/articles/${article.id}/comments/${comment.id}`, {
+    method: 'DELETE',
+    cookie: twoCookie,
+    body: {},
+  });
+  assert.equal(result.response.status, 403);
+  assert.equal(result.payload.code, 'COMMENT_NOT_OWNED');
+
+  result = await call(e, `/api/articles/${article.id}/comments/${comment.id}`, {
+    method: 'PUT',
+    cookie: oneCookie,
+    body: { content: 'Edited by owner' },
+  });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.payload.comment.content, 'Edited by owner');
+
+  result = await call(e, `/api/articles/${article.id}/comments/${comment.id}`, {
+    method: 'DELETE',
+    cookie: oneCookie,
+    body: {},
+  });
+  assert.equal(result.response.status, 200);
+
+  result = await call(e, '/api/content', { cookie: oneCookie });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.payload.comments.length, 0);
+});
+
+test('portal name defaults safely and can be changed by administrators', async () => {
+  const e = env();
+  const admin = await setupAdmin(e);
+
+  let result = await call(e, '/api/bootstrap', { cookie: admin.cookie });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.payload.portalName, 'Information Portal');
+
+  result = await call(e, '/api/admin/settings', {
+    method: 'PATCH',
+    cookie: admin.cookie,
+    body: { portalName: 'Operations Hub' },
+  });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.payload.portalName, 'Operations Hub');
+
+  result = await call(e, '/api/bootstrap', { cookie: admin.cookie });
+  assert.equal(result.payload.portalName, 'Operations Hub');
+
+  result = await call(e, '/api/content', { cookie: admin.cookie });
+  assert.equal(result.payload.portalName, 'Operations Hub');
+
+  result = await call(e, '/api/admin/logbook', { cookie: admin.cookie });
+  const entry = result.payload.entries.find((item) => item.action === 'Portal Name Update');
+  assert.equal(entry.entityLabel, 'Portal');
+  assert.equal(entry.previousEntityLabel, 'Information Portal');
 });
