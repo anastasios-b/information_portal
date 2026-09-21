@@ -90,6 +90,7 @@ test('UI preserves required routes, content controls and single-load behavior', 
   assert.match(app, /removeComment/);
   assert.match(app, /Portal Name/);
   assert.match(app, /boot\.portalName/);
+  assert.match(app, /<Settings boot=\{boot\} refresh=\{refresh\} patchContent=\{patchContent\} \/>/);
   assert.match(app, /Homepage content/);
   assert.match(app, /Hero Label/);
   assert.match(app, /Hero Title/);
