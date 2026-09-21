@@ -7,33 +7,46 @@ React information portal deployed as one Cloudflare Worker with Static Assets an
 - `/admin` redirects to `/admin/articles`
 - `/admin/articles`
 - `/admin/categories`
+- `/admin/announcements`
 - `/admin/logbook` (administrators only)
 - `/admin/users`
 - `/admin/settings`
 
-## Portal search
+## Portal content loading
 
-The portal loads articles and categories once, then performs filtering entirely in the client:
+Portal content is loaded through one aggregate endpoint:
 
-- live text search across title, summary, article body, and category name
+```text
+GET /api/content
+GET /api/content?manage=1
+```
+
+The React application memoizes that request in memory for the current visibility/user scope. Home and article navigation reuse the same loaded articles, categories, active announcements, and private-mode comments instead of querying those resources again. Administrative article/category/announcement mutations patch the already-loaded client state directly.
+
+A visibility or authentication scope change creates a new content scope and performs one fresh aggregate load because the permitted dataset can change.
+
+Normal `api()` requests use browser `cache: "no-store"`.
+
+Search and category filtering are entirely client-side after the initial content load:
+
+- live text search across title, summary, article body, and every attached category
 - category dropdown
 - combined search + category filtering
 - live result count
 - no API request on each keystroke
 
-When the portal is public, its first article/category load is cached in `sessionStorage` for five minutes. Private portal data is never put in that cache.
-
-Normal `api()` requests always use browser `cache: "no-store"`. All admin screens use this uncached API path. Admin data is therefore fetched fresh when an admin page loads or reloads after a mutation.
-
 ## R2 database layout
 
-The former monolithic JSON database has been split into four independent objects:
+The portal uses independent R2 JSON objects:
 
 ```text
 db/users.json
 db/articles.json
 db/article-categories.json
 db/settings.json
+db/logbook.json
+db/announcements.json
+db/comments.json
 ```
 
 Each file has its own UUID root record and conditional-write ETag.
@@ -43,13 +56,15 @@ The API reads only the stores needed by the operation. Examples:
 ```text
 login                         users
 bootstrap                     users + settings
-public article list           settings + articles
-public category list          settings + article-categories
+portal content load           settings + users when private + articles + article-categories + announcements + comments when private
+manage content load           settings + users + articles + article-categories + announcements
 admin user CRUD               users
-article save                  users + article-categories + articles
-category save                 users + article-categories
-category delete               users + articles + article-categories
-visibility change             users + settings
+article save                  users + article-categories + articles + asynchronous logbook
+category save                 users + article-categories + asynchronous logbook
+category delete               users + articles + article-categories + asynchronous logbook
+visibility change             users + settings + asynchronous logbook
+announcement CRUD             users + announcements
+comment create                settings + users + articles + comments
 ```
 
 ### Legacy migration
@@ -62,15 +77,16 @@ db/information-portal.json
 
 If one of the new split files does not exist, the Worker reads the legacy object once, extracts only that store's data, and writes the new split file. After all four stores have been touched, normal API traffic no longer needs the monolithic object.
 
-Existing users, password hashes, articles, categories, visibility mode, UUIDs, and timestamps are retained. Legacy articles without a category remain `Uncategorized` until edited.
+Existing users, password hashes, articles, categories, visibility mode, UUIDs, and timestamps are retained. Legacy single-category articles remain readable and are exposed to the client as `categoryIds[]`. Legacy users without a full name remain readable and use their email as the display-name fallback until edited.
 
 ## Permissions
 
 - Initial setup exists only while there is no administrator.
 - No public registration is available afterward.
-- Administrators manage users, categories, articles, and visibility.
-- Editors manage categories and articles.
+- Administrators manage users, categories, articles, announcements, visibility, and the administrator-only logbook.
+- Editors manage categories, articles, and announcements.
 - Readers consume published content.
+- Comments are available only while the portal is private and can be posted by authenticated administrators, editors, and readers.
 - The last administrator cannot be deleted or demoted.
 - Visibility changes require the logged-in administrator's current password.
 - The currently selected visibility mode cannot be selected again.
@@ -182,3 +198,30 @@ Legacy UUID-backed image references remain readable for existing articles, but t
 ## Logbook
 
 Audit entries are stored in `db/logbook.json`. Logbook access is restricted to administrators only.
+
+
+## Articles, comments, and announcements
+
+Articles can be attached to one or more categories. The persisted canonical field is:
+
+```json
+{ "categoryIds": ["<uuid>", "<uuid>"] }
+```
+
+Private-mode article pages include comments. Each comment stores a snapshot of the author's full name and email and is displayed as:
+
+```text
+Full Name (email@example.com)
+```
+
+Announcements are managed by administrators and editors. Each announcement has a required start date and an optional end date; an omitted end date means the announcement remains eligible indefinitely. Public/private portal content includes only announcements active at the current time, while the manage endpoint includes all announcements.
+
+The Home and Article pages show a right sidebar with **Announcements** above **Recent Articles**. Up to three announcements appear inline; when more are active, **Show all** opens a right-side drawer with the full list.
+
+## Visual accent
+
+The portal's distinct accent color is:
+
+```text
+#e74e24
+```
