@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { api, articleImageUrl, cachedPortalApi, clearPortalCache, listArticleImages, uploadArticleImage } from './api.js';
+import { api, articleImageUrl, listArticleImages, loadContentOnce, uploadArticleImage } from './api.js';
 
-const ADMIN_ROUTES = ['/admin/articles', '/admin/categories', '/admin/logbook', '/admin/users', '/admin/settings'];
+const ADMIN_ROUTES = ['/admin/articles', '/admin/categories', '/admin/announcements', '/admin/logbook', '/admin/users', '/admin/settings'];
 
 function navigate(path, { replace = false } = {}) {
   if (replace) history.replaceState({}, '', path);
@@ -27,6 +27,8 @@ export default function App() {
   const path = usePath();
   const [boot, setBoot] = useState();
   const [error, setError] = useState('');
+  const [contentCache, setContentCache] = useState({});
+  const [contentErrors, setContentErrors] = useState({});
 
   const refresh = async () => {
     try {
@@ -39,21 +41,68 @@ export default function App() {
 
   useEffect(() => { refresh(); }, []);
 
+  const isAdminRoute = path.startsWith('/admin');
+  const canManage = Boolean(boot?.user && ['administrator', 'editor'].includes(boot.user.role));
+  const canViewPortal = Boolean(boot && (boot.mode === 'public' || boot.user));
+  const manage = isAdminRoute && canManage;
+  const needsContent = Boolean(boot && !boot.setupRequired && ((isAdminRoute && canManage) || (!isAdminRoute && canViewPortal)));
+  const contentKey = boot
+    ? `${manage ? 'manage' : 'portal'}:${boot.mode}:${boot.user?.id || 'anonymous'}`
+    : '';
+
+  useEffect(() => {
+    if (!needsContent || contentCache[contentKey] || contentErrors[contentKey]) return;
+    let active = true;
+    loadContentOnce(contentKey, { manage })
+      .then((data) => {
+        if (!active) return;
+        setContentCache((current) => ({ ...current, [contentKey]: data }));
+      })
+      .catch((err) => {
+        if (!active) return;
+        setContentErrors((current) => ({ ...current, [contentKey]: err.message }));
+      });
+    return () => { active = false; };
+  }, [contentKey, contentCache, contentErrors, manage, needsContent]);
+
+  const patchContent = (updater) => {
+    setContentCache((current) => {
+      const next = { ...current };
+      for (const [key, data] of Object.entries(current)) {
+        next[key] = updater(data, { manage: key.startsWith('manage:'), key }) || data;
+      }
+      return next;
+    });
+  };
+
   if (error) return <Center><Card title="Portal unavailable" text={error} /></Center>;
   if (!boot) return <AppSkeleton />;
   if (boot.setupRequired) return <Setup boot={boot} refresh={refresh} />;
 
-  if (path.startsWith('/admin')) {
+  if (isAdminRoute) {
     if (!boot.user) return <Login mode={boot.mode} refresh={refresh} />;
-    if (!['administrator', 'editor'].includes(boot.user.role)) {
+    if (!canManage) {
       return <Center><Card title="Access denied" text="Administrators and editors only." action={() => navigate('/')} /></Center>;
     }
-    return <Admin path={path} boot={boot} refresh={refresh} />;
+  } else if (boot.mode === 'private' && !boot.user) {
+    return <Login mode={boot.mode} refresh={refresh} />;
   }
 
-  if (boot.mode === 'private' && !boot.user) return <Login mode={boot.mode} refresh={refresh} />;
-  if (path.startsWith('/articles/')) return <ArticlePage path={path} boot={boot} refresh={refresh} />;
-  return <Home boot={boot} refresh={refresh} />;
+  if (needsContent && contentErrors[contentKey]) {
+    return <Center><Card title="Portal unavailable" text={contentErrors[contentKey]} action={() => navigate('/')} /></Center>;
+  }
+  if (needsContent && !contentCache[contentKey]) return <AppSkeleton />;
+
+  const content = contentCache[contentKey];
+
+  if (isAdminRoute) {
+    return <Admin path={path} boot={boot} refresh={refresh} content={content} patchContent={patchContent} />;
+  }
+
+  if (path.startsWith('/articles/')) {
+    return <ArticlePage path={path} boot={boot} refresh={refresh} content={content} patchContent={patchContent} />;
+  }
+  return <Home boot={boot} refresh={refresh} content={content} />;
 }
 
 function Login({ mode, refresh }) {
@@ -89,7 +138,7 @@ function Login({ mode, refresh }) {
 }
 
 function Setup({ boot, refresh }) {
-  const [form, setForm] = useState({ email: '', password: '', repeat: '', bootstrapToken: '' });
+  const [form, setForm] = useState({ fullName: '', email: '', password: '', repeat: '', bootstrapToken: '' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -101,7 +150,12 @@ function Setup({ boot, refresh }) {
     try {
       await api('/api/setup', {
         method: 'POST',
-        body: JSON.stringify({ email: form.email, password: form.password, bootstrapToken: form.bootstrapToken }),
+        body: JSON.stringify({
+          fullName: form.fullName,
+          email: form.email,
+          password: form.password,
+          bootstrapToken: form.bootstrapToken,
+        }),
       });
       await refresh();
       navigate('/admin/articles', { replace: true });
@@ -116,6 +170,7 @@ function Setup({ boot, refresh }) {
     <small>Initial setup</small><h1>Create first administrator</h1>
     <p>Registration closes after this account is created.</p>
     <form onSubmit={submit}>
+      <Field label="Full Name"><input autoComplete="name" maxLength="120" required value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} /></Field>
       <Field label="Email"><input type="email" autoComplete="username" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
       <Field label="Password"><input type="password" autoComplete="new-password" minLength="10" required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></Field>
       <Field label="Repeat password"><input type="password" autoComplete="new-password" minLength="10" required value={form.repeat} onChange={(e) => setForm({ ...form, repeat: e.target.value })} /></Field>
@@ -126,38 +181,21 @@ function Setup({ boot, refresh }) {
   </div></Center>;
 }
 
-function Home({ boot, refresh }) {
-  const [articles, setArticles] = useState([]);
-  const [categories, setCategories] = useState([]);
+function Home({ boot, refresh, content }) {
+  const articles = content?.articles || [];
+  const categories = content?.categories || [];
+  const announcements = content?.announcements || [];
   const [query, setQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let active = true;
-    setLoading(true);
-    const load = boot.mode === 'public' ? cachedPortalApi : api;
-    Promise.all([load('/api/articles'), load('/api/categories')])
-      .then(([articleData, categoryData]) => {
-        if (!active) return;
-        setArticles(articleData.articles);
-        setCategories(categoryData.categories);
-        setError('');
-      })
-      .catch((err) => { if (active) setError(err.message); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [boot.mode, boot.user?.id]);
 
   const categoryMap = useMemo(() => new Map(categories.map((category) => [category.id, category.name])), [categories]);
   const filteredArticles = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     return articles.filter((article) => {
-      if (categoryFilter && article.categoryId !== categoryFilter) return false;
+      const categoryNames = (article.categoryIds || []).map((categoryId) => categoryMap.get(categoryId)).filter(Boolean);
+      if (categoryFilter && !(article.categoryIds || []).includes(categoryFilter)) return false;
       if (!needle) return true;
-      const category = categoryMap.get(article.categoryId) || 'Uncategorized';
-      return [article.title, article.summary, articlePlainText(article.content), category]
+      return [article.title, article.summary, articlePlainText(article.content), ...categoryNames]
         .some((value) => String(value || '').toLocaleLowerCase().includes(needle));
     });
   }, [articles, categoryFilter, categoryMap, query]);
@@ -169,22 +207,10 @@ function Home({ boot, refresh }) {
   };
 
   return <>
-    <header className="top">
-      <b>Information Portal</b>
-      <div>
-        <span className="pill">{boot.mode}</span>
-        {boot.user ? <>
-          <span className="who">{boot.user.email}</span>
-          {['administrator', 'editor'].includes(boot.user.role) && <button className="secondary" onClick={() => navigate('/admin/articles')}>Admin</button>}
-          <button className="secondary" onClick={logout}>Log out</button>
-        </> : <button className="secondary" onClick={() => navigate('/admin/articles')}>Staff login</button>}
-      </div>
-    </header>
-
-    <main className="main">
-      <section className="hero"><small>Team knowledge</small><h1>Information that stays easy to find.</h1><p>Published procedures, references, notes and updates in one lean portal.</p></section>
-      {error && <ErrorBox text={error} />}
-      {loading ? <PortalSkeleton /> : <>
+    <PortalHeader boot={boot} refresh={refresh} logout={logout} />
+    <main className="main portal-layout">
+      <div className="portal-primary">
+        <section className="hero"><small>Team knowledge</small><h1>Information that stays easy to find.</h1><p>Published procedures, references, notes and updates in one lean portal.</p></section>
         <section className="portal-tools" aria-label="Filter articles">
           <label className="search-field"><span>Search</span><input type="search" placeholder="Search articles…" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
           <label className="category-filter"><span>Category</span><select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option value="">All categories</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
@@ -192,54 +218,34 @@ function Home({ boot, refresh }) {
         <p className="results-count">{filteredArticles.length} {filteredArticles.length === 1 ? 'article' : 'articles'}</p>
         <section className="grid">
           {filteredArticles.map((article) => <article className="card article" key={article.id}>
-          <div>
-            <div className="article-meta"><span className="tag">{categoryMap.get(article.categoryId) || 'Uncategorized'}</span><small>{new Date(article.updatedAt).toLocaleString()}</small></div>
-            <h2>{article.title}</h2><p>{article.summary || articlePlainText(article.content).slice(0, 160)}</p>
-          </div>
-          <button className="article-read" onClick={() => navigate(`/articles/${article.id}`)}>Read article →</button>
+            <div>
+              <div className="article-meta">
+                {(article.categoryIds || []).map((categoryId) => <span className="tag" key={categoryId}>{categoryMap.get(categoryId) || 'Uncategorized'}</span>)}
+                <small>{new Date(article.updatedAt).toLocaleString()}</small>
+              </div>
+              <h2>{article.title}</h2><p>{article.summary || articlePlainText(article.content).slice(0, 160)}</p>
+            </div>
+            <button className="article-read" onClick={() => navigate(`/articles/${article.id}`)}>Read article →</button>
           </article>)}
         </section>
-        {!articles.length && !error && <div className="empty">No published articles yet.</div>}
-        {Boolean(articles.length) && !filteredArticles.length && !error && <div className="empty">No matching articles.</div>}
-      </>}
+        {!articles.length && <div className="empty">No published articles yet.</div>}
+        {Boolean(articles.length) && !filteredArticles.length && <div className="empty">No matching articles.</div>}
+      </div>
+      <PortalSidebar announcements={announcements} articles={articles} />
     </main>
-
   </>;
 }
 
-function ArticlePage({ path, boot, refresh }) {
+function ArticlePage({ path, boot, refresh, content, patchContent }) {
   const articleId = path.split('/').filter(Boolean)[1] || '';
-  const [article, setArticle] = useState();
-  const [categories, setCategories] = useState([]);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let active = true;
-    setLoading(true);
-    const categoryLoader = boot.mode === 'public' ? cachedPortalApi : api;
-
-    Promise.all([
-      api(`/api/articles/${articleId}`),
-      categoryLoader('/api/categories'),
-    ])
-      .then(([articleData, categoryData]) => {
-        if (!active) return;
-        setArticle(articleData.article);
-        setCategories(categoryData.categories);
-        setError('');
-      })
-      .catch((err) => {
-        if (active) setError(err.message);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-
-    return () => { active = false; };
-  }, [articleId, boot.mode, boot.user?.id]);
-
-  const categoryName = categories.find((category) => category.id === article?.categoryId)?.name || 'Uncategorized';
+  const article = (content?.articles || []).find((item) => item.id === articleId);
+  const categories = content?.categories || [];
+  const announcements = content?.announcements || [];
+  const comments = (content?.comments || []).filter((comment) => comment.articleId === articleId);
+  const categoryMap = useMemo(() => new Map(categories.map((category) => [category.id, category.name])), [categories]);
+  const [commentText, setCommentText] = useState('');
+  const [commentBusy, setCommentBusy] = useState(false);
+  const [commentError, setCommentError] = useState('');
 
   const logout = async () => {
     await api('/api/logout', { method: 'POST', body: '{}' });
@@ -247,42 +253,127 @@ function ArticlePage({ path, boot, refresh }) {
     navigate('/');
   };
 
-  return <>
-    <header className="top">
-      <button className="brand-link" onClick={() => navigate('/')}>Information Portal</button>
-      <div>
-        <span className="pill">{boot.mode}</span>
-        {boot.user ? <>
-          <span className="who">{boot.user.email}</span>
-          {['administrator', 'editor'].includes(boot.user.role) && <button className="secondary" onClick={() => navigate('/admin/articles')}>Admin</button>}
-          <button className="secondary" onClick={logout}>Log out</button>
-        </> : <button className="secondary" onClick={() => navigate('/admin/articles')}>Staff login</button>}
-      </div>
-    </header>
+  const submitComment = async (event) => {
+    event.preventDefault();
+    if (!commentText.trim() || commentBusy) return;
+    setCommentBusy(true);
+    setCommentError('');
+    try {
+      const result = await api(`/api/articles/${articleId}/comments`, {
+        method: 'POST',
+        body: JSON.stringify({ content: commentText }),
+      });
+      patchContent((current, meta) => {
+        if (meta.manage || current.mode !== 'private') return current;
+        return { ...current, comments: [...(current.comments || []), result.comment] };
+      });
+      setCommentText('');
+    } catch (err) {
+      setCommentError(err.message);
+    } finally {
+      setCommentBusy(false);
+    }
+  };
 
-    <main className="article-page">
-      {loading ? <ArticlePageSkeleton /> : error ? <ErrorBox text={error} /> : article ? <>
+  return <>
+    <PortalHeader boot={boot} refresh={refresh} logout={logout} />
+    <main className="article-page portal-layout">
+      <div className="portal-primary">
         <button className="article-back" onClick={() => navigate('/')}>← Back to portal</button>
-        <article className="article-document">
-          <div className="article-meta">
-            <span className="tag">{categoryName}</span>
-            <small>Updated {new Date(article.updatedAt).toLocaleString()}</small>
-          </div>
-          <h1>{article.title}</h1>
-          {article.summary && <p className="article-summary">{article.summary}</p>}
-          <div className="article-body">{renderArticleContent(article.content)}</div>
-        </article>
-      </> : null}
+        {!article ? <ErrorBox text="Article not found" /> : <>
+          <article className="article-document">
+            <div className="article-meta">
+              {(article.categoryIds || []).map((categoryId) => <span className="tag" key={categoryId}>{categoryMap.get(categoryId) || 'Uncategorized'}</span>)}
+              <small>Updated {new Date(article.updatedAt).toLocaleString()}</small>
+            </div>
+            <h1>{article.title}</h1>
+            {article.summary && <p className="article-summary">{article.summary}</p>}
+            <div className="article-body">{renderArticleContent(article.content)}</div>
+          </article>
+
+          {boot.mode === 'private' && <section className="comments-section card">
+            <h2>Comments</h2>
+            <form className="comment-form" onSubmit={submitComment}>
+              <Field label="Add comment"><textarea rows="3" maxLength="4000" required value={commentText} onChange={(event) => setCommentText(event.target.value)} /></Field>
+              {commentError && <ErrorBox text={commentError} />}
+              <button disabled={commentBusy || !commentText.trim()}>{commentBusy ? 'Posting…' : 'Post comment'}</button>
+            </form>
+            <div className="comments-list">
+              {comments.map((comment) => <article className="comment" key={comment.id}>
+                <div className="comment-meta"><b>{comment.userFullName} ({comment.userEmail})</b><small>{new Date(comment.createdAt).toLocaleString()}</small></div>
+                <p>{comment.content}</p>
+              </article>)}
+              {!comments.length && <p className="hint">No comments yet.</p>}
+            </div>
+          </section>}
+        </>}
+      </div>
+      <PortalSidebar announcements={announcements} articles={content?.articles || []} currentArticleId={articleId} />
     </main>
   </>;
 }
 
-function Admin({ path, boot, refresh }) {
+function PortalHeader({ boot, logout }) {
+  return <header className="top">
+    <button className="brand-link" onClick={() => navigate('/')}>Information Portal</button>
+    <div>
+      <span className="pill">{boot.mode}</span>
+      {boot.user ? <>
+        <span className="who">{boot.user.fullName || boot.user.email}</span>
+        {['administrator', 'editor'].includes(boot.user.role) && <button className="secondary" onClick={() => navigate('/admin/articles')}>Admin</button>}
+        <button className="secondary" onClick={logout}>Log out</button>
+      </> : <button className="secondary" onClick={() => navigate('/admin/articles')}>Staff login</button>}
+    </div>
+  </header>;
+}
+
+function PortalSidebar({ announcements, articles, currentArticleId }) {
+  const [showAll, setShowAll] = useState(false);
+  const recentArticles = (articles || []).filter((article) => article.id !== currentArticleId).slice(0, 5);
+  const visibleAnnouncements = (announcements || []).slice(0, 3);
+
+  return <aside className="portal-sidebar">
+    <section className="sidebar-section announcements-section">
+      <div className="sidebar-title"><h2>Announcements</h2></div>
+      {visibleAnnouncements.map((announcement) => <article className="announcement-card" key={announcement.id}>
+        <b>{announcement.title}</b>
+        <p>{announcement.content}</p>
+        <small>From {new Date(announcement.startAt).toLocaleString()}{announcement.endAt ? ` · until ${new Date(announcement.endAt).toLocaleString()}` : ''}</small>
+      </article>)}
+      {!visibleAnnouncements.length && <p className="hint">No active announcements.</p>}
+      {(announcements || []).length > 3 && <button className="secondary sidebar-show-all" onClick={() => setShowAll(true)}>Show all</button>}
+    </section>
+
+    <section className="sidebar-section recent-section">
+      <div className="sidebar-title"><h2>Recent Articles</h2></div>
+      {recentArticles.map((article) => <button className="recent-article" key={article.id} onClick={() => navigate(`/articles/${article.id}`)}>
+        <span>{article.title}</span><small>{new Date(article.updatedAt).toLocaleString()}</small>
+      </button>)}
+      {!recentArticles.length && <p className="hint">No recent articles.</p>}
+    </section>
+
+    {showAll && <div className="drawer-backdrop" onMouseDown={() => setShowAll(false)}>
+      <aside className="announcement-drawer" role="dialog" aria-modal="true" aria-label="All announcements" onMouseDown={(event) => event.stopPropagation()}>
+        <header><h2>Announcements</h2><button className="secondary" onClick={() => setShowAll(false)}>Close</button></header>
+        <div className="announcement-drawer-list">
+          {(announcements || []).map((announcement) => <article className="announcement-card" key={announcement.id}>
+            <b>{announcement.title}</b>
+            <p>{announcement.content}</p>
+            <small>From {new Date(announcement.startAt).toLocaleString()}{announcement.endAt ? ` · until ${new Date(announcement.endAt).toLocaleString()}` : ''}</small>
+          </article>)}
+        </div>
+      </aside>
+    </div>}
+  </aside>;
+}
+
+function Admin({ path, boot, refresh, content, patchContent }) {
   const isAdmin = boot.user.role === 'administrator';
   const isArticleRoute = path === '/admin/articles' || /^\/admin\/articles\/[0-9a-f-]{36}$/i.test(path);
   const isAllowedRoute =
     isArticleRoute ||
     path === '/admin/categories' ||
+    path === '/admin/announcements' ||
     (isAdmin && (path === '/admin/logbook' || path === '/admin/users' || path === '/admin/settings'));
 
   useEffect(() => {
@@ -304,20 +395,22 @@ function Admin({ path, boot, refresh }) {
       <nav>
         <NavButton path="/admin/articles" current={activePath}>Articles</NavButton>
         <NavButton path="/admin/categories" current={activePath}>Article Categories</NavButton>
+        <NavButton path="/admin/announcements" current={activePath}>Announcements</NavButton>
         {isAdmin && <NavButton path="/admin/users" current={activePath}>Users</NavButton>}
         {isAdmin && <NavButton path="/admin/settings" current={activePath}>Settings</NavButton>}
         {isAdmin && <NavButton path="/admin/logbook" current={activePath}>Logbook</NavButton>}
       </nav>
       <footer>
-        <span>{boot.user.email}</span><span>{boot.user.role}</span>
+        <span>{boot.user.fullName || boot.user.email}</span><span>{boot.user.role}</span>
         <a className="secondary button-link" href="/" target="_blank" rel="noopener noreferrer">View portal <NewTabIcon /></a>
         <button className="secondary" onClick={logout}>Log out</button>
       </footer>
     </aside>
 
     <main className="admin">
-      {activePath === '/admin/articles' && <Articles path={path} />}
-      {activePath === '/admin/categories' && <Categories />}
+      {activePath === '/admin/articles' && <Articles path={path} content={content} patchContent={patchContent} />}
+      {activePath === '/admin/categories' && <Categories content={content} patchContent={patchContent} />}
+      {activePath === '/admin/announcements' && <Announcements content={content} patchContent={patchContent} />}
       {activePath === '/admin/logbook' && isAdmin && <Logbook />}
       {activePath === '/admin/users' && isAdmin && <Users boot={boot} refresh={refresh} />}
       {activePath === '/admin/settings' && isAdmin && <Settings boot={boot} refresh={refresh} />}
