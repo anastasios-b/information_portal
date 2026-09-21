@@ -310,11 +310,13 @@ async function saveArticle(request, env, ctx, id = null) {
   const { data: categoryStore } = await readStore(env, 'categories');
   const input = validateArticle(body, categoryStore.categories);
 
+  let previousArticle = null;
   const article = await mutateStore(env, 'articles', (store) => {
     const now = new Date().toISOString();
     if (id) {
       const existing = store.articles.find((item) => item.id === id);
       if (!existing) throw new ApiError(404, 'Article not found', 'ARTICLE_NOT_FOUND');
+      previousArticle = { id: existing.id, label: existing.title };
       Object.assign(existing, input, { updatedAt: now, updatedById: user.id });
       return existing;
     }
@@ -334,6 +336,8 @@ async function saveArticle(request, env, ctx, id = null) {
     action: id ? 'Article Update' : 'Article Create',
     entityId: article.id,
     entityLabel: article.title,
+    previousEntityId: previousArticle?.id ?? null,
+    previousEntityLabel: previousArticle?.label ?? null,
     userEmail: user.email,
   });
 
@@ -354,6 +358,8 @@ async function deleteArticle(request, env, ctx, id) {
     action: 'Article Delete',
     entityId: deleted.id,
     entityLabel: deleted.title,
+    previousEntityId: deleted.id,
+    previousEntityLabel: deleted.title,
     userEmail: user.email,
   });
   return json({ ok: true });
@@ -377,6 +383,7 @@ async function saveCategory(request, env, ctx, id = null) {
   const { user } = await authenticate(request, env, ['administrator', 'editor']);
   const input = validateCategory(await jsonBody(request));
 
+  let previousCategory = null;
   const category = await mutateStore(env, 'categories', (store) => {
     if (store.categories.some((item) => item.name.toLocaleLowerCase() === input.name.toLocaleLowerCase() && item.id !== id)) {
       throw new ApiError(409, 'Category name is already in use', 'CATEGORY_NAME_IN_USE');
@@ -385,6 +392,7 @@ async function saveCategory(request, env, ctx, id = null) {
     if (id) {
       const existing = store.categories.find((item) => item.id === id);
       if (!existing) throw new ApiError(404, 'Category not found', 'CATEGORY_NOT_FOUND');
+      previousCategory = { id: existing.id, label: existing.name };
       existing.name = input.name;
       existing.updatedAt = now;
       existing.updatedById = user.id;
@@ -406,6 +414,8 @@ async function saveCategory(request, env, ctx, id = null) {
     action: id ? 'Category Update' : 'Category Create',
     entityId: category.id,
     entityLabel: category.name,
+    previousEntityId: previousCategory?.id ?? null,
+    previousEntityLabel: previousCategory?.label ?? null,
     userEmail: user.email,
   });
 
@@ -431,6 +441,8 @@ async function deleteCategory(request, env, ctx, id) {
     action: 'Category Delete',
     entityId: deleted.id,
     entityLabel: deleted.name,
+    previousEntityId: deleted.id,
+    previousEntityLabel: deleted.name,
     userEmail: user.email,
   });
   return json({ ok: true });
@@ -457,6 +469,7 @@ async function saveUser(request, env, ctx, id = null) {
   const password = input.password ? validatePassword(input.password) : null;
   if (!id && !password) throw new ApiError(400, 'Password is required', 'PASSWORD_REQUIRED');
 
+  let previousUser = null;
   const user = await mutateStore(env, 'users', async (store) => {
     const actor = userFromSession(store.users, session);
     requireRole(actor, ['administrator']);
@@ -468,6 +481,7 @@ async function saveUser(request, env, ctx, id = null) {
     if (id) {
       const existing = store.users.find((item) => item.id === id);
       if (!existing) throw new ApiError(404, 'User not found', 'USER_NOT_FOUND');
+      previousUser = { id: existing.id, label: existing.email };
       if (existing.role === 'administrator' && role !== 'administrator' && adminCount(store.users) <= 1) {
         throw new ApiError(409, 'The system must always have at least one administrator', 'LAST_ADMIN_REQUIRED');
       }
@@ -498,6 +512,8 @@ async function saveUser(request, env, ctx, id = null) {
     action: id ? 'User Update' : 'User Create',
     entityId: user.id,
     entityLabel: user.email,
+    previousEntityId: previousUser?.id ?? null,
+    previousEntityLabel: previousUser?.label ?? null,
     userEmail: actingUser.email,
   });
 
@@ -523,6 +539,8 @@ async function deleteUser(request, env, ctx, id) {
     action: 'User Delete',
     entityId: deleted.id,
     entityLabel: deleted.email,
+    previousEntityId: deleted.id,
+    previousEntityLabel: deleted.email,
     userEmail: actingUser.email,
   });
   return json({ ok: true }, 200, session.uid === id ? { 'Set-Cookie': expiredSessionCookie(request) } : {});
@@ -538,8 +556,10 @@ async function updateSettings(request, env, ctx) {
     throw new ApiError(401, 'Incorrect administrator password', 'INVALID_CREDENTIALS');
   }
 
+  let previousMode = null;
   await mutateStore(env, 'settings', (settings) => {
     if (settings.mode === input.mode) throw new ApiError(409, `Portal is already ${input.mode}`, 'MODE_UNCHANGED');
+    previousMode = settings.mode;
     settings.mode = input.mode;
     settings.updatedAt = new Date().toISOString();
     settings.updatedById = user.id;
@@ -549,6 +569,8 @@ async function updateSettings(request, env, ctx) {
     action: `Portal State Update to ${input.mode === 'public' ? 'Public' : 'Private'}`,
     entityId: null,
     entityLabel: 'Portal',
+    previousEntityId: null,
+    previousEntityLabel: previousMode === 'public' ? 'Public' : 'Private',
     userEmail: user.email,
   });
   return json({ ok: true, mode: input.mode });
@@ -715,21 +737,32 @@ function validateStore(name, data) {
   } else if (name === 'logbook') {
     if (!Array.isArray(data.entries)) throw new ApiError(500, 'Portal logbook data is invalid', 'INVALID_DATABASE');
     for (const entry of data.entries) {
+      const previousIdValid = entry.previousEntityId === undefined || entry.previousEntityId === null || isUuid(entry.previousEntityId);
+      const previousLabelValid = entry.previousEntityLabel === undefined || entry.previousEntityLabel === null || typeof entry.previousEntityLabel === 'string';
       if (!isUuid(entry.id) || typeof entry.action !== 'string' || typeof entry.entityLabel !== 'string' ||
-          (entry.entityId !== null && !isUuid(entry.entityId)) || typeof entry.userEmail !== 'string' ||
-          typeof entry.createdAt !== 'string') {
+          (entry.entityId !== null && !isUuid(entry.entityId)) || !previousIdValid || !previousLabelValid ||
+          typeof entry.userEmail !== 'string' || typeof entry.createdAt !== 'string') {
         throw new ApiError(500, 'Portal logbook data is invalid', 'INVALID_DATABASE');
       }
     }
   }
 }
 
-function scheduleLogEntry(ctx, env, { action, entityId, entityLabel, userEmail }) {
+function scheduleLogEntry(ctx, env, {
+  action,
+  entityId,
+  entityLabel,
+  previousEntityId = null,
+  previousEntityLabel = null,
+  userEmail,
+}) {
   const entry = {
     id: crypto.randomUUID(),
     action,
     entityId,
     entityLabel,
+    previousEntityId,
+    previousEntityLabel,
     userEmail,
     createdAt: new Date().toISOString(),
   };
