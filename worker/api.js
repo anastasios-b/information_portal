@@ -546,7 +546,7 @@ async function updateSettings(request, env) {
   });
 
   await appendLogEntry(env, {
-    action: 'Portal State Update',
+    action: `Portal State Update to ${input.mode === 'public' ? 'Public' : 'Private'}`,
     entityId: null,
     entityLabel: 'Portal',
     userEmail: user.email,
