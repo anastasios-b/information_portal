@@ -1307,10 +1307,17 @@ function renderArticleContent(content) {
   let codeLines = [];
 
   const pushCodeBlock = () => {
+    const language = codeLanguage;
     nodes.push(
-      <pre className="article-code-block" key={`code-${keyIndex++}`}>
-        <code data-language={codeLanguage || undefined}>{codeLines.join('\n')}</code>
-      </pre>,
+      <details className="article-code-disclosure" open key={`code-${keyIndex++}`}>
+        <summary className="article-code-summary">
+          <span>{language ? `Code · ${language}` : 'Code'}</span>
+          <span className="article-code-chevron" aria-hidden="true">⌄</span>
+        </summary>
+        <pre className="article-code-block">
+          <code data-language={language || undefined}>{codeLines.join('\n')}</code>
+        </pre>
+      </details>,
     );
     codeLines = [];
     codeLanguage = '';
