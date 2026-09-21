@@ -27,6 +27,9 @@ test('UI preserves required routes, content controls and single-load behavior', 
   assert.match(app, /className="category-checklist"/);
   assert.match(app, /categoryIds/);
   assert.match(app, /Create category/);
+  assert.match(app, /Hide category and its exclusive articles/);
+  assert.match(app, /Articles assigned to another visible category remain visible/);
+  assert.match(app, /category-hidden-badge/);
   assert.match(app, /accept="\.txt,\.md,text\/plain,text\/markdown"/);
 
   assert.match(app, /type="search"/);
@@ -138,4 +141,5 @@ test('UI preserves required routes, content controls and single-load behavior', 
   assert.match(styles, /\.announcement-drawer\{/);
   assert.match(styles, /\.comments-section\{/);
   assert.match(styles, /\.category-checklist\{/);
+  assert.match(styles, /\.category-hidden-badge\{/);
 });
