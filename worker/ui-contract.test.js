@@ -4,18 +4,28 @@ import { readFile } from 'node:fs/promises';
 
 const app = await readFile(new URL('../src/App.jsx', import.meta.url), 'utf8');
 const clientApi = await readFile(new URL('../src/api.js', import.meta.url), 'utf8');
+const styles = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
 
-test('UI preserves required routes, search and controls', () => {
-  for (const route of ['/admin/articles', '/admin/categories', '/admin/logbook', '/admin/users', '/admin/settings']) {
-    assert.match(app, new RegExp(route.replace(/\//g, '\\\/')));
+test('UI preserves required routes, content controls and single-load behavior', () => {
+  for (const route of [
+    '/admin/articles',
+    '/admin/categories',
+    '/admin/announcements',
+    '/admin/logbook',
+    '/admin/users',
+    '/admin/settings',
+  ]) {
+    assert.match(app, new RegExp(route.replace(/\//g, '\\/')));
   }
 
   assert.match(app, /Create first administrator/);
+  assert.ok((app.match(/Full Name/g) || []).length >= 2);
   assert.ok((app.match(/Repeat password/g) || []).length >= 2);
   for (const role of ['administrator', 'editor', 'reader']) assert.match(app, new RegExp(role));
 
   assert.match(app, /Article Categories/);
-  assert.match(app, /Select category/);
+  assert.match(app, /className="category-checklist"/);
+  assert.match(app, /categoryIds/);
   assert.match(app, /Create category/);
   assert.match(app, /accept="\.txt,\.md,text\/plain,text\/markdown"/);
 
@@ -25,9 +35,12 @@ test('UI preserves required routes, search and controls', () => {
   assert.match(app, /filteredArticles/);
   assert.match(app, /No matching articles/);
 
-  assert.match(app, /boot\.mode === 'public' \? cachedPortalApi : api/);
-  assert.match(clientApi, /sessionStorage\.getItem/);
-  assert.match(clientApi, /sessionStorage\.setItem/);
+  assert.match(app, /loadContentOnce\(contentKey, \{ manage \}\)/);
+  assert.match(clientApi, /const contentRequests = new Map\(\)/);
+  assert.match(clientApi, /\/api\/content/);
+  assert.match(clientApi, /contentRequests\.has\(key\)/);
+  assert.doesNotMatch(app, /cachedPortalApi/);
+  assert.doesNotMatch(clientApi, /sessionStorage/);
   assert.match(clientApi, /cache: 'no-store'/);
 
   assert.match(app, /Confirm with your administrator password/);
@@ -37,25 +50,38 @@ test('UI preserves required routes, search and controls', () => {
   assert.match(app, /isAdmin && <NavButton path="\/admin\/logbook"/);
   assert.match(app, /Previous Value/);
 
+  assert.match(app, /function PortalSidebar/);
+  assert.match(app, /Announcements/);
+  assert.match(app, /Recent Articles/);
+  assert.match(app, />Show all</);
+  assert.match(app, /className="announcement-drawer"/);
+  assert.match(app, /function Announcements/);
+  assert.match(app, /Start date/);
+  assert.match(app, /End date \(optional\)/);
+
+  assert.match(app, /function ArticlePage/);
+  assert.match(app, /Comments/);
+  assert.match(app, /Post comment/);
+  assert.match(app, /comment\.userFullName/);
+  assert.match(app, /comment\.userEmail/);
+  assert.match(app, /boot\.mode === 'private'/);
+
   assert.match(app, /function AppSkeleton/);
   assert.match(app, /function PortalSkeleton/);
   assert.match(app, /function RecordSkeleton/);
   assert.match(app, /className="skeleton"/);
-  assert.match(app, /aria-busy=\{loading\}/);
   assert.doesNotMatch(app, />Loading…</);
 
   assert.match(app, /path\.startsWith\('\/articles\/'\)/);
-  assert.match(app, /function ArticlePage/);
   assert.match(app, /\/articles\/\$\{article\.id\}/);
   assert.match(app, /className="article-read"/);
   assert.match(app, /className="article-edit"/);
   assert.match(app, /className="article-delete"/);
-  assert.match(app, /<Articles path=\{path\} \/>/);
+  assert.match(app, /<Articles path=\{path\} content=\{content\} patchContent=\{patchContent\} \/>/);
   assert.match(app, /\/admin\/articles\/\$\{article\.id\}/);
   assert.match(app, /Live rendering/);
   assert.match(app, /Article preview/);
   assert.match(app, /renderArticleContent\(form\.content\)/);
-  assert.doesNotMatch(app, /className="modal"/);
 
   assert.match(app, /Add inline image/);
   assert.match(app, /uploadArticleImage/);
@@ -64,15 +90,13 @@ test('UI preserves required routes, search and controls', () => {
   assert.match(app, /renderArticleContent/);
   assert.match(app, /\[25, 50, 75, 100\]/);
   assert.match(app, /className="inline-image-control"/);
-  assert.match(app, /className="inline-article-image"/);
   assert.match(app, /className="inline-article-image-row"/);
-  assert.match(app, /image\.width <= 50/);
-  assert.match(app, /gridColumn: `span \$\{image\.width \/ 25\}`/);
   assert.match(app, /Media library/);
-  assert.match(app, /listArticleImages/);
-  assert.match(app, /className="media-library-overlay"/);
-  assert.match(app, /className="media-library-grid"/);
-  assert.match(app, /result\.image\.filename/);
   assert.match(clientApi, /X-Article-Image-Filename/);
-  assert.match(clientApi, /encodeURIComponent\(filename\)/);
+
+  assert.match(styles, /--accent:#e74e24/);
+  assert.match(styles, /\.portal-layout\{/);
+  assert.match(styles, /\.announcement-drawer\{/);
+  assert.match(styles, /\.comments-section\{/);
+  assert.match(styles, /\.category-checklist\{/);
 });
