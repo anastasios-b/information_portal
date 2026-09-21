@@ -196,3 +196,11 @@
 .article-markdown-h6{font-size:.9rem;margin:1rem 0 .45rem;text-transform:uppercase;letter-spacing:.04em}
 .article-code-block{margin:1.4rem 0;padding:1rem 1.1rem;overflow:auto;border:1px solid #d8dad3;border-radius:12px;background:#f4f4f0;color:#252923;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;font-size:.9rem;line-height:1.6;white-space:pre}
 .article-code-block code{font:inherit;color:inherit}
+
+.article-code-disclosure{margin:1.4rem 0;border:1px solid #d8dad3;border-radius:12px;background:#f4f4f0;overflow:hidden}
+.article-code-summary{display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:.7rem 1rem;cursor:pointer;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;font-size:.8rem;font-weight:700;color:#4f554d;list-style:none;user-select:none}
+.article-code-summary::-webkit-details-marker{display:none}
+.article-code-summary:hover{background:#ecece7}
+.article-code-chevron{display:inline-flex;align-items:center;justify-content:center;transition:transform .16s ease;font-size:1rem;line-height:1}
+.article-code-disclosure[open] .article-code-chevron{transform:rotate(180deg)}
+.article-code-disclosure .article-code-block{margin:0;border:0;border-top:1px solid #d8dad3;border-radius:0}
