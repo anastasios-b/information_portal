@@ -75,7 +75,7 @@ The previous object remains supported as a read-only migration source:
 db/information-portal.json
 ```
 
-If one of the new split files does not exist, the Worker reads the legacy object once, extracts only that store's data, and writes the new split file. After all four stores have been touched, normal API traffic no longer needs the monolithic object.
+If one of the new split files does not exist, the Worker reads the legacy object once, extracts only that store's data, and writes the new split file. After the legacy-backed stores have been touched, normal API traffic no longer needs the monolithic object.
 
 Existing users, password hashes, articles, categories, visibility mode, UUIDs, and timestamps are retained. Legacy single-category articles remain readable and are exposed to the client as `categoryIds[]`. Legacy users without a full name remain readable and use their email as the display-name fallback until edited.
 
