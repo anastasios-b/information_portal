@@ -98,6 +98,14 @@ test('UI preserves required routes, content controls and single-load behavior', 
   assert.match(app, /Live rendering/);
   assert.match(app, /Article preview/);
   assert.match(app, /renderArticleContent\(form\.content\)/);
+  assert.match(app, /className="markdown-toolbar"/);
+  assert.match(app, /Insert H1 heading/);
+  assert.match(app, /Insert code block/);
+  assert.match(app, /insertMarkdown\('code'\)/);
+  assert.match(app, /article-markdown-heading/);
+  assert.match(app, /article-code-block/);
+  assert.match(styles, /\.markdown-toolbar\{/);
+  assert.match(styles, /\.article-code-block\{/);
 
   assert.match(app, /Add inline image/);
   assert.match(app, /uploadArticleImage/);
