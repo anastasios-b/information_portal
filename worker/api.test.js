@@ -12,6 +12,8 @@ const KEYS = {
   categories: 'db/article-categories.json',
   settings: 'db/settings.json',
   logbook: 'db/logbook.json',
+  announcements: 'db/announcements.json',
+  comments: 'db/comments.json',
   legacy: 'db/information-portal.json',
 };
 
@@ -500,6 +502,168 @@ test('article update logbook captures every changed previous field', async () =>
     { field: 'Summary', value: 'Original summary' },
     { field: 'Content', value: 'Original content' },
     { field: 'Status', value: 'draft' },
-    { field: 'Category', value: 'First category', referenceId: firstCategory.id },
+    { field: 'Categories', value: 'First category', referenceIds: [firstCategory.id] },
   ]);
+});
+
+
+test('multi-category articles, comments, full names and announcements work together', async () => {
+  const e = env();
+  const admin = await setupAdmin(e);
+  const firstCategory = await createCategory(e, admin.cookie, 'Networking');
+  const secondCategory = await createCategory(e, admin.cookie, 'Cloud');
+
+  let result = await call(e, '/api/admin/users', {
+    method: 'POST',
+    cookie: admin.cookie,
+    body: {
+      fullName: 'Reader User',
+      email: 'reader@example.com',
+      password: 'reader-secure-password',
+      role: 'reader',
+    },
+  });
+  assert.equal(result.response.status, 201);
+  assert.equal(result.payload.user.fullName, 'Reader User');
+
+  result = await call(e, '/api/articles', {
+    method: 'POST',
+    cookie: admin.cookie,
+    body: {
+      title: 'Multi category article',
+      summary: 'Summary',
+      content: 'Body',
+      status: 'published',
+      categoryIds: [firstCategory.id, secondCategory.id],
+    },
+  });
+  assert.equal(result.response.status, 201);
+  const article = result.payload.article;
+  assert.deepEqual(article.categoryIds, [firstCategory.id, secondCategory.id]);
+
+  result = await call(e, '/api/login', {
+    method: 'POST',
+    body: { email: 'reader@example.com', password: 'reader-secure-password' },
+  });
+  assert.equal(result.response.status, 200);
+  const readerCookie = cookieFrom(result.response);
+
+  result = await call(e, `/api/articles/${article.id}/comments`, {
+    method: 'POST',
+    cookie: readerCookie,
+    body: { content: 'Useful note' },
+  });
+  assert.equal(result.response.status, 201);
+  assert.equal(result.payload.comment.userFullName, 'Reader User');
+  assert.equal(result.payload.comment.userEmail, 'reader@example.com');
+
+  const startAt = new Date(Date.now() - 60_000).toISOString();
+  result = await call(e, '/api/announcements', {
+    method: 'POST',
+    cookie: admin.cookie,
+    body: { title: 'Maintenance', content: 'Planned work', startAt, endAt: null },
+  });
+  assert.equal(result.response.status, 201);
+  assert.equal(result.payload.announcement.endAt, null);
+
+  result = await call(e, '/api/content', { cookie: readerCookie });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.payload.articles.length, 1);
+  assert.deepEqual(result.payload.articles[0].categoryIds, [firstCategory.id, secondCategory.id]);
+  assert.equal(result.payload.comments.length, 1);
+  assert.equal(result.payload.comments[0].userFullName, 'Reader User');
+  assert.equal(result.payload.announcements.length, 1);
+
+  result = await call(e, `/api/categories/${secondCategory.id}`, { method: 'DELETE', cookie: admin.cookie, body: {} });
+  assert.equal(result.response.status, 409);
+  assert.equal(result.payload.code, 'CATEGORY_IN_USE');
+});
+
+test('comments are disabled in public mode and inactive announcements are hidden from portal content', async () => {
+  const e = env();
+  const admin = await setupAdmin(e);
+  const category = await createCategory(e, admin.cookie);
+
+  let result = await call(e, '/api/articles', {
+    method: 'POST',
+    cookie: admin.cookie,
+    body: { title: 'Public article', summary: '', content: 'Body', status: 'published', categoryIds: [category.id] },
+  });
+  const article = result.payload.article;
+
+  await call(e, '/api/announcements', {
+    method: 'POST',
+    cookie: admin.cookie,
+    body: {
+      title: 'Future announcement',
+      content: 'Not visible yet',
+      startAt: new Date(Date.now() + 86_400_000).toISOString(),
+      endAt: null,
+    },
+  });
+
+  await call(e, '/api/admin/settings', {
+    method: 'PATCH',
+    cookie: admin.cookie,
+    body: { mode: 'public', password: ADMIN_PASSWORD },
+  });
+
+  result = await call(e, `/api/articles/${article.id}/comments`, {
+    method: 'POST',
+    cookie: admin.cookie,
+    body: { content: 'Should fail' },
+  });
+  assert.equal(result.response.status, 403);
+  assert.equal(result.payload.code, 'COMMENTS_PRIVATE_ONLY');
+
+  result = await call(e, '/api/content');
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(result.payload.comments, []);
+  assert.deepEqual(result.payload.announcements, []);
+});
+
+test('manage content endpoint returns drafts and all announcements to editors', async () => {
+  const e = env();
+  const admin = await setupAdmin(e);
+  const category = await createCategory(e, admin.cookie);
+
+  await call(e, '/api/articles', {
+    method: 'POST',
+    cookie: admin.cookie,
+    body: { title: 'Draft', summary: '', content: 'Body', status: 'draft', categoryIds: [category.id] },
+  });
+
+  await call(e, '/api/announcements', {
+    method: 'POST',
+    cookie: admin.cookie,
+    body: {
+      title: 'Future',
+      content: 'Future content',
+      startAt: new Date(Date.now() + 86_400_000).toISOString(),
+      endAt: null,
+    },
+  });
+
+  let result = await call(e, '/api/admin/users', {
+    method: 'POST',
+    cookie: admin.cookie,
+    body: {
+      fullName: 'Editor User',
+      email: 'editor-content@example.com',
+      password: 'editor-content-password',
+      role: 'editor',
+    },
+  });
+  assert.equal(result.response.status, 201);
+
+  result = await call(e, '/api/login', {
+    method: 'POST',
+    body: { email: 'editor-content@example.com', password: 'editor-content-password' },
+  });
+  const editorCookie = cookieFrom(result.response);
+
+  result = await call(e, '/api/content?manage=1', { cookie: editorCookie });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.payload.articles[0].status, 'draft');
+  assert.equal(result.payload.announcements[0].title, 'Future');
 });
