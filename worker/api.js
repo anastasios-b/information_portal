@@ -401,10 +401,11 @@ async function saveAnnouncement(request, env, id = null) {
       Object.assign(existing, input, { updatedAt: now, updatedById: user.id });
       return existing;
     }
+    normalizeAnnouncementSortOrders(store.announcements);
     const created = {
       id: crypto.randomUUID(),
       ...input,
-      sortOrder: nextAnnouncementSortOrder(store.announcements),
+      sortOrder: store.announcements.length,
       createdById: user.id,
       updatedById: user.id,
       createdAt: now,
@@ -1399,11 +1400,10 @@ function sortAnnouncements(announcements) {
     return b.startAt.localeCompare(a.startAt);
   });
 }
-function nextAnnouncementSortOrder(announcements) {
-  const explicit = announcements
-    .map((announcement) => announcement.sortOrder)
-    .filter((value) => Number.isInteger(value) && value >= 0);
-  return explicit.length ? Math.max(...explicit) + 1 : announcements.length;
+function normalizeAnnouncementSortOrders(announcements) {
+  sortAnnouncements(announcements).forEach((announcement, index) => {
+    announcement.sortOrder = index;
+  });
 }
 function sortComments(comments) { return [...comments].sort((a, b) => a.createdAt.localeCompare(b.createdAt)); }
 function isAnnouncementActive(announcement, now = Date.now()) {
