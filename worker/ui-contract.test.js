@@ -49,6 +49,10 @@ test('UI preserves required routes, content controls and single-load behavior', 
   assert.match(app, /rel="noopener noreferrer"/);
   assert.match(app, /isAdmin && <NavButton path="\/admin\/logbook"/);
   assert.match(app, /Previous Value/);
+  assert.match(app, /Filter logbook by action/);
+  assert.match(app, /All actions/);
+  assert.match(app, /filteredEntries/);
+  assert.match(styles, /\.logbook-action-header\{/);
 
   assert.match(app, /function PortalSidebar/);
   assert.match(app, /Announcements/);
