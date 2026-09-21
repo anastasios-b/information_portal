@@ -1042,3 +1042,52 @@ test('bootstrap exposes default initial article count and editable homepage cont
   assert.equal(result.payload.heroTitle, 'Find the answer quickly.');
   assert.equal(result.payload.heroDescription, 'Procedures and references for the team.');
 });
+
+
+test('announcement custom order persists and drives portal rendering order', async () => {
+  const e = env();
+  const admin = await setupAdmin(e);
+  const now = Date.now();
+
+  const created = [];
+  for (const [index, title] of ['First', 'Second', 'Third'].entries()) {
+    const result = await call(e, '/api/announcements', {
+      method: 'POST',
+      cookie: admin.cookie,
+      body: {
+        title,
+        content: `${title} content`,
+        startAt: new Date(now - (index + 1) * 60_000).toISOString(),
+        endAt: null,
+      },
+    });
+    assert.equal(result.response.status, 201);
+    created.push(result.payload.announcement);
+  }
+
+  const desiredIds = [created[2].id, created[0].id, created[1].id];
+  let result = await call(e, '/api/announcements/order', {
+    method: 'PUT',
+    cookie: admin.cookie,
+    body: { ids: desiredIds },
+  });
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(result.payload.announcements.map((announcement) => announcement.id), desiredIds);
+  assert.deepEqual(result.payload.announcements.map((announcement) => announcement.sortOrder), [0, 1, 2]);
+
+  result = await call(e, '/api/content?manage=1', { cookie: admin.cookie });
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(result.payload.announcements.map((announcement) => announcement.id), desiredIds);
+
+  result = await call(e, '/api/content', { cookie: admin.cookie });
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(result.payload.announcements.map((announcement) => announcement.id), desiredIds);
+
+  result = await call(e, '/api/announcements/order', {
+    method: 'PUT',
+    cookie: admin.cookie,
+    body: { ids: desiredIds.slice(0, 2) },
+  });
+  assert.equal(result.response.status, 400);
+  assert.equal(result.payload.code, 'INVALID_ANNOUNCEMENT_ORDER');
+});
