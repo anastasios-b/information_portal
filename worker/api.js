@@ -27,7 +27,7 @@ export class ApiError extends Error {
   }
 }
 
-export async function handleApiRequest(request, env) {
+export async function handleApiRequest(request, env, ctx) {
   const requestId = crypto.randomUUID();
   try {
     validateEnvironment(env);
@@ -53,16 +53,16 @@ export async function handleApiRequest(request, env) {
     if (parts[0] === 'articles') {
       if (method === 'GET' && parts.length === 1) return await listArticles(request, env, url.searchParams.get('manage') === '1');
       if (method === 'GET' && parts.length === 2) return await getArticle(request, env, parts[1]);
-      if (method === 'POST' && parts.length === 1) return await saveArticle(request, env);
-      if (method === 'PUT' && parts.length === 2) return await saveArticle(request, env, parts[1]);
-      if (method === 'DELETE' && parts.length === 2) return await deleteArticle(request, env, parts[1]);
+      if (method === 'POST' && parts.length === 1) return await saveArticle(request, env, ctx);
+      if (method === 'PUT' && parts.length === 2) return await saveArticle(request, env, ctx, parts[1]);
+      if (method === 'DELETE' && parts.length === 2) return await deleteArticle(request, env, ctx, parts[1]);
     }
 
     if (parts[0] === 'categories') {
       if (method === 'GET' && parts.length === 1) return await listCategories(request, env, url.searchParams.get('manage') === '1');
-      if (method === 'POST' && parts.length === 1) return await saveCategory(request, env);
-      if (method === 'PUT' && parts.length === 2) return await saveCategory(request, env, parts[1]);
-      if (method === 'DELETE' && parts.length === 2) return await deleteCategory(request, env, parts[1]);
+      if (method === 'POST' && parts.length === 1) return await saveCategory(request, env, ctx);
+      if (method === 'PUT' && parts.length === 2) return await saveCategory(request, env, ctx, parts[1]);
+      if (method === 'DELETE' && parts.length === 2) return await deleteCategory(request, env, ctx, parts[1]);
     }
 
     if (method === 'GET' && parts[0] === 'admin' && parts[1] === 'logbook' && parts.length === 2) {
@@ -71,13 +71,13 @@ export async function handleApiRequest(request, env) {
 
     if (parts[0] === 'admin' && parts[1] === 'users') {
       if (method === 'GET' && parts.length === 2) return await listUsers(request, env);
-      if (method === 'POST' && parts.length === 2) return await saveUser(request, env);
-      if (method === 'PUT' && parts.length === 3) return await saveUser(request, env, parts[2]);
-      if (method === 'DELETE' && parts.length === 3) return await deleteUser(request, env, parts[2]);
+      if (method === 'POST' && parts.length === 2) return await saveUser(request, env, ctx);
+      if (method === 'PUT' && parts.length === 3) return await saveUser(request, env, ctx, parts[2]);
+      if (method === 'DELETE' && parts.length === 3) return await deleteUser(request, env, ctx, parts[2]);
     }
 
     if (method === 'PATCH' && parts[0] === 'admin' && parts[1] === 'settings' && parts.length === 2) {
-      return await updateSettings(request, env);
+      return await updateSettings(request, env, ctx);
     }
 
     throw new ApiError(404, 'Endpoint not found', 'NOT_FOUND');
@@ -303,7 +303,7 @@ async function getArticle(request, env, id) {
   return json({ article });
 }
 
-async function saveArticle(request, env, id = null) {
+async function saveArticle(request, env, ctx, id = null) {
   if (id) assertUuid(id);
   const { user } = await authenticate(request, env, ['administrator', 'editor']);
   const body = await jsonBody(request);
@@ -330,7 +330,7 @@ async function saveArticle(request, env, id = null) {
     return created;
   });
 
-  await appendLogEntry(env, {
+  scheduleLogEntry(ctx, env, {
     action: id ? 'Article Update' : 'Article Create',
     entityId: article.id,
     entityLabel: article.title,
@@ -340,7 +340,7 @@ async function saveArticle(request, env, id = null) {
   return json({ article }, id ? 200 : 201);
 }
 
-async function deleteArticle(request, env, id) {
+async function deleteArticle(request, env, ctx, id) {
   assertUuid(id);
   const { user } = await authenticate(request, env, ['administrator', 'editor']);
   const deleted = await mutateStore(env, 'articles', (store) => {
@@ -350,7 +350,7 @@ async function deleteArticle(request, env, id) {
     return article;
   });
 
-  await appendLogEntry(env, {
+  scheduleLogEntry(ctx, env, {
     action: 'Article Delete',
     entityId: deleted.id,
     entityLabel: deleted.title,
@@ -372,7 +372,7 @@ async function listCategories(request, env, manage) {
   return json({ categories: sortCategories(categoryStore.categories) });
 }
 
-async function saveCategory(request, env, id = null) {
+async function saveCategory(request, env, ctx, id = null) {
   if (id) assertUuid(id);
   const { user } = await authenticate(request, env, ['administrator', 'editor']);
   const input = validateCategory(await jsonBody(request));
@@ -402,7 +402,7 @@ async function saveCategory(request, env, id = null) {
     return created;
   });
 
-  await appendLogEntry(env, {
+  scheduleLogEntry(ctx, env, {
     action: id ? 'Category Update' : 'Category Create',
     entityId: category.id,
     entityLabel: category.name,
@@ -412,7 +412,7 @@ async function saveCategory(request, env, id = null) {
   return json({ category }, id ? 200 : 201);
 }
 
-async function deleteCategory(request, env, id) {
+async function deleteCategory(request, env, ctx, id) {
   assertUuid(id);
   const { user } = await authenticate(request, env, ['administrator', 'editor']);
   const { data: articleStore } = await readStore(env, 'articles');
@@ -427,7 +427,7 @@ async function deleteCategory(request, env, id) {
     return category;
   });
 
-  await appendLogEntry(env, {
+  scheduleLogEntry(ctx, env, {
     action: 'Category Delete',
     entityId: deleted.id,
     entityLabel: deleted.name,
@@ -448,7 +448,7 @@ async function listUsers(request, env) {
   return json({ users: usersStore.users.map(publicUser).sort((a, b) => a.email.localeCompare(b.email)) });
 }
 
-async function saveUser(request, env, id = null) {
+async function saveUser(request, env, ctx, id = null) {
   if (id) assertUuid(id);
   const { session, user: actingUser } = await authenticate(request, env, ['administrator']);
   const input = await jsonBody(request);
@@ -494,7 +494,7 @@ async function saveUser(request, env, id = null) {
     return created;
   });
 
-  await appendLogEntry(env, {
+  scheduleLogEntry(ctx, env, {
     action: id ? 'User Update' : 'User Create',
     entityId: user.id,
     entityLabel: user.email,
@@ -504,7 +504,7 @@ async function saveUser(request, env, id = null) {
   return json({ user: publicUser(user) }, id ? 200 : 201);
 }
 
-async function deleteUser(request, env, id) {
+async function deleteUser(request, env, ctx, id) {
   assertUuid(id);
   const { session, user: actingUser } = await authenticate(request, env, ['administrator']);
   const deleted = await mutateStore(env, 'users', (store) => {
@@ -519,7 +519,7 @@ async function deleteUser(request, env, id) {
     return user;
   });
 
-  await appendLogEntry(env, {
+  scheduleLogEntry(ctx, env, {
     action: 'User Delete',
     entityId: deleted.id,
     entityLabel: deleted.email,
@@ -528,7 +528,7 @@ async function deleteUser(request, env, id) {
   return json({ ok: true }, 200, session.uid === id ? { 'Set-Cookie': expiredSessionCookie(request) } : {});
 }
 
-async function updateSettings(request, env) {
+async function updateSettings(request, env, ctx) {
   const { user } = await authenticate(request, env, ['administrator']);
   const input = await jsonBody(request);
   if (!['private', 'public'].includes(input.mode)) throw new ApiError(400, 'Mode must be private or public', 'INVALID_MODE');
@@ -545,7 +545,7 @@ async function updateSettings(request, env) {
     settings.updatedById = user.id;
   });
 
-  await appendLogEntry(env, {
+  scheduleLogEntry(ctx, env, {
     action: `Portal State Update to ${input.mode === 'public' ? 'Public' : 'Private'}`,
     entityId: null,
     entityLabel: 'Portal',
@@ -724,20 +724,28 @@ function validateStore(name, data) {
   }
 }
 
-async function appendLogEntry(env, { action, entityId, entityLabel, userEmail }) {
-  const createdAt = new Date().toISOString();
-  return mutateStore(env, 'logbook', (store) => {
-    const entry = {
-      id: crypto.randomUUID(),
-      action,
-      entityId,
-      entityLabel,
-      userEmail,
-      createdAt,
-    };
+function scheduleLogEntry(ctx, env, { action, entityId, entityLabel, userEmail }) {
+  const entry = {
+    id: crypto.randomUUID(),
+    action,
+    entityId,
+    entityLabel,
+    userEmail,
+    createdAt: new Date().toISOString(),
+  };
+
+  const task = mutateStore(env, 'logbook', (store) => {
     store.entries.push(entry);
     return entry;
+  }).catch((error) => {
+    console.error('Asynchronous logbook write failed', error?.stack || error);
   });
+
+  if (ctx && typeof ctx.waitUntil === 'function') {
+    ctx.waitUntil(task);
+  } else {
+    void task;
+  }
 }
 
 function sortArticles(articles) { return [...articles].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
