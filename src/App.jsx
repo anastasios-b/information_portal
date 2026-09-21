@@ -900,17 +900,18 @@ function Articles({ path, content, patchContent }) {
 function Categories({ content, patchContent }) {
   const items = content?.categories || [];
   const [name, setName] = useState('');
+  const [hidden, setHidden] = useState(false);
   const [id, setId] = useState();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const reset = () => { setId(undefined); setName(''); setError(''); };
+  const reset = () => { setId(undefined); setName(''); setHidden(false); setError(''); };
   const save = async (event) => {
     event.preventDefault(); setBusy(true); setError('');
     try {
       const result = await api(id ? `/api/categories/${id}` : '/api/categories', {
         method: id ? 'PUT' : 'POST',
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, hidden }),
       });
       const saved = result.category;
       patchContent((current) => ({
@@ -921,7 +922,12 @@ function Categories({ content, patchContent }) {
       reset();
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
-  const edit = (category) => { setId(category.id); setName(category.name); setError(''); };
+  const edit = (category) => {
+    setId(category.id);
+    setName(category.name);
+    setHidden(Boolean(category.hidden));
+    setError('');
+  };
   const remove = async (category) => {
     if (!confirm(`Delete category "${category.name}"?`)) return;
     try {
@@ -940,13 +946,21 @@ function Categories({ content, patchContent }) {
       <form className="card form" onSubmit={save}>
         <h2>{id ? 'Edit category' : 'New category'}</h2>
         <Field label="Name"><input required maxLength="80" value={name} onChange={(e) => setName(e.target.value)} /></Field>
+        <label className="boolean-field">
+          <input type="checkbox" checked={hidden} onChange={(event) => setHidden(event.target.checked)} />
+          <span>Hide category and its exclusive articles</span>
+        </label>
+        <p className="hint category-visibility-hint">Articles assigned to another visible category remain visible.</p>
         {error && <ErrorBox text={error} />}
         <button disabled={busy}>{busy ? 'Saving…' : id ? 'Save category' : 'Create category'}</button>
         {id && <button type="button" className="secondary" onClick={reset}>Cancel</button>}
       </form>
       <div className="card"><h2>Existing categories</h2><div className="records">
         {items.map((category) => <div className="record" key={category.id}>
-          <div><b>{category.name}</b><small>{category.id}</small></div>
+          <div>
+            <div className="category-record-title"><b>{category.name}</b>{category.hidden && <span className="category-hidden-badge">Hidden</span>}</div>
+            <small>{category.id}</small>
+          </div>
           <div><button className="secondary" onClick={() => edit(category)}>Edit</button><button className="danger" onClick={() => remove(category)}>Delete</button></div>
         </div>)}
       </div>{!items.length && <p className="hint">No categories yet.</p>}</div>
