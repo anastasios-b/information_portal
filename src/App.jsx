@@ -1,7 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import Prism from 'prismjs';
+import 'prismjs/components/prism-bash';
+import 'prismjs/components/prism-markup-templating';
+import 'prismjs/components/prism-php';
+import 'prismjs/components/prism-sql';
+import 'prismjs/components/prism-python';
 import { api, articleImageUrl, listArticleImages, loadContentOnce, uploadArticleImage } from './api.js';
 
 const ADMIN_ROUTES = ['/admin/articles', '/admin/categories', '/admin/announcements', '/admin/logbook', '/admin/users', '/admin/settings'];
+
+const CODE_LANGUAGES = {
+  js: { prism: 'javascript', label: 'JavaScript' },
+  javascript: { prism: 'javascript', label: 'JavaScript' },
+  bash: { prism: 'bash', label: 'Bash' },
+  sh: { prism: 'bash', label: 'Bash' },
+  shell: { prism: 'bash', label: 'Bash' },
+  php: { prism: 'php', label: 'PHP' },
+  sql: { prism: 'sql', label: 'SQL' },
+  python: { prism: 'python', label: 'Python' },
+  py: { prism: 'python', label: 'Python' },
+};
 
 function navigate(path, { replace = false } = {}) {
   if (replace) history.replaceState({}, '', path);
@@ -1298,6 +1316,36 @@ function articlePlainText(content) {
     .trim();
 }
 
+function renderSyntaxTokens(tokens, keyPrefix = 'token') {
+  return tokens.map((token, index) => {
+    if (typeof token === 'string') return token;
+
+    const aliases = token.alias
+      ? (Array.isArray(token.alias) ? token.alias : [token.alias])
+      : [];
+    const className = ['token', token.type, ...aliases].join(' ');
+    const childTokens = Array.isArray(token.content) ? token.content : [token.content];
+
+    return <span className={className} key={`${keyPrefix}-${index}`}>
+      {renderSyntaxTokens(childTokens, `${keyPrefix}-${index}`)}
+    </span>;
+  });
+}
+
+function highlightedCode(code, language) {
+  const config = CODE_LANGUAGES[String(language || '').toLowerCase()];
+  if (!config) return { content: code, label: language || '', highlighted: false };
+
+  const grammar = Prism.languages[config.prism];
+  if (!grammar) return { content: code, label: config.label, highlighted: false };
+
+  return {
+    content: renderSyntaxTokens(Prism.tokenize(code, grammar), `syntax-${config.prism}`),
+    label: config.label,
+    highlighted: true,
+  };
+}
+
 function renderArticleContent(content) {
   const lines = String(content || '').split('\n');
   const nodes = [];
@@ -1308,14 +1356,16 @@ function renderArticleContent(content) {
 
   const pushCodeBlock = () => {
     const language = codeLanguage;
+    const code = codeLines.join('\n');
+    const rendered = highlightedCode(code, language);
     nodes.push(
-      <details className="article-code-disclosure" open key={`code-${keyIndex++}`}>
+      <details className={`article-code-disclosure${rendered.highlighted ? ' syntax-highlighted' : ''}`} open key={`code-${keyIndex++}`}>
         <summary className="article-code-summary">
-          <span>{language ? `Code · ${language}` : 'Code'}</span>
+          <span>{rendered.label ? `Code · ${rendered.label}` : 'Code'}</span>
           <span className="article-code-chevron" aria-hidden="true">⌄</span>
         </summary>
         <pre className="article-code-block">
-          <code data-language={language || undefined}>{codeLines.join('\n')}</code>
+          <code data-language={language || undefined}>{rendered.content}</code>
         </pre>
       </details>,
     );
