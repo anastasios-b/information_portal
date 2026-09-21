@@ -705,7 +705,7 @@ function Logbook() {
         {loading ? <LogbookSkeleton /> : entries.map((entry) => <div className="logbook-row" role="row" key={entry.id}>
           <div role="cell"><b>{entry.action}</b></div>
           <div role="cell" className="logbook-entity">
-            {entry.entityId ? <><code>{entry.entityId}</code><span>{entry.entityLabel}</span></> : <span>{entry.entityLabel}</span>}
+            {entry.entityId ? <><span>{entry.entityLabel}</span><code>{entry.entityId}</code></> : <span>{entry.entityLabel}</span>}
           </div>
           <div role="cell">{entry.userEmail}</div>
           <div role="cell"><time dateTime={entry.createdAt}>{new Date(entry.createdAt).toLocaleString()}</time></div>
