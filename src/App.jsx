@@ -709,11 +709,19 @@ function Logbook() {
             {entry.entityId ? <><span>{entry.entityLabel}</span><code>{entry.entityId}</code></> : <span>{entry.entityLabel}</span>}
           </div>
           <div role="cell" className="logbook-entity">
-            {entry.previousEntityLabel
-              ? entry.previousEntityId
-                ? <><span>{entry.previousEntityLabel}</span><code>{entry.previousEntityId}</code></>
-                : <span>{entry.previousEntityLabel}</span>
-              : <span className="logbook-empty">—</span>}
+            {entry.previousFields?.length
+              ? <div className="logbook-previous-fields">
+                  {entry.previousFields.map((field, index) => <div className="logbook-previous-field" key={`${field.field}-${index}`}>
+                    <b>{field.field}</b>
+                    <span className="logbook-previous-value">{field.value || '(empty)'}</span>
+                    {field.referenceId && <code>{field.referenceId}</code>}
+                  </div>)}
+                </div>
+              : entry.previousEntityLabel
+                ? entry.previousEntityId
+                  ? <><span>{entry.previousEntityLabel}</span><code>{entry.previousEntityId}</code></>
+                  : <span>{entry.previousEntityLabel}</span>
+                : <span className="logbook-empty">—</span>}
           </div>
           <div role="cell">{entry.userEmail}</div>
           <div role="cell"><time dateTime={entry.createdAt}>{new Date(entry.createdAt).toLocaleString()}</time></div>
