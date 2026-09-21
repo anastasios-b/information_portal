@@ -4,6 +4,7 @@ const STORE_KEYS = {
   articles: 'db/articles.json',
   categories: 'db/article-categories.json',
   settings: 'db/settings.json',
+  logbook: 'db/logbook.json',
 };
 const ARTICLE_IMAGE_PREFIX = 'article-images/';
 const MAX_ARTICLE_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -62,6 +63,10 @@ export async function handleApiRequest(request, env) {
       if (method === 'POST' && parts.length === 1) return await saveCategory(request, env);
       if (method === 'PUT' && parts.length === 2) return await saveCategory(request, env, parts[1]);
       if (method === 'DELETE' && parts.length === 2) return await deleteCategory(request, env, parts[1]);
+    }
+
+    if (method === 'GET' && parts[0] === 'admin' && parts[1] === 'logbook' && parts.length === 2) {
+      return await listLogbook(request, env);
     }
 
     if (parts[0] === 'admin' && parts[1] === 'users') {
@@ -325,16 +330,31 @@ async function saveArticle(request, env, id = null) {
     return created;
   });
 
+  await appendLogEntry(env, {
+    action: id ? 'Article Update' : 'Article Create',
+    entityId: article.id,
+    entityLabel: article.title,
+    userEmail: user.email,
+  });
+
   return json({ article }, id ? 200 : 201);
 }
 
 async function deleteArticle(request, env, id) {
   assertUuid(id);
-  await authenticate(request, env, ['administrator', 'editor']);
-  await mutateStore(env, 'articles', (store) => {
+  const { user } = await authenticate(request, env, ['administrator', 'editor']);
+  const deleted = await mutateStore(env, 'articles', (store) => {
     const index = store.articles.findIndex((item) => item.id === id);
     if (index < 0) throw new ApiError(404, 'Article not found', 'ARTICLE_NOT_FOUND');
-    store.articles.splice(index, 1);
+    const [article] = store.articles.splice(index, 1);
+    return article;
+  });
+
+  await appendLogEntry(env, {
+    action: 'Article Delete',
+    entityId: deleted.id,
+    entityLabel: deleted.title,
+    userEmail: user.email,
   });
   return json({ ok: true });
 }
@@ -382,22 +402,45 @@ async function saveCategory(request, env, id = null) {
     return created;
   });
 
+  await appendLogEntry(env, {
+    action: id ? 'Category Update' : 'Category Create',
+    entityId: category.id,
+    entityLabel: category.name,
+    userEmail: user.email,
+  });
+
   return json({ category }, id ? 200 : 201);
 }
 
 async function deleteCategory(request, env, id) {
   assertUuid(id);
-  await authenticate(request, env, ['administrator', 'editor']);
+  const { user } = await authenticate(request, env, ['administrator', 'editor']);
   const { data: articleStore } = await readStore(env, 'articles');
   if (articleStore.articles.some((article) => article.categoryId === id)) {
     throw new ApiError(409, 'Category is used by one or more articles', 'CATEGORY_IN_USE');
   }
-  await mutateStore(env, 'categories', (store) => {
+
+  const deleted = await mutateStore(env, 'categories', (store) => {
     const index = store.categories.findIndex((item) => item.id === id);
     if (index < 0) throw new ApiError(404, 'Category not found', 'CATEGORY_NOT_FOUND');
-    store.categories.splice(index, 1);
+    const [category] = store.categories.splice(index, 1);
+    return category;
+  });
+
+  await appendLogEntry(env, {
+    action: 'Category Delete',
+    entityId: deleted.id,
+    entityLabel: deleted.name,
+    userEmail: user.email,
   });
   return json({ ok: true });
+}
+
+async function listLogbook(request, env) {
+  await authenticate(request, env, ['administrator', 'editor']);
+  const { data: logbookStore } = await readStore(env, 'logbook');
+  const entries = [...logbookStore.entries].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return json({ entries });
 }
 
 async function listUsers(request, env) {
@@ -407,7 +450,7 @@ async function listUsers(request, env) {
 
 async function saveUser(request, env, id = null) {
   if (id) assertUuid(id);
-  const { session } = await authenticate(request, env, ['administrator']);
+  const { session, user: actingUser } = await authenticate(request, env, ['administrator']);
   const input = await jsonBody(request);
   const email = normalizeEmail(input.email);
   const role = validateRole(input.role);
@@ -451,13 +494,20 @@ async function saveUser(request, env, id = null) {
     return created;
   });
 
+  await appendLogEntry(env, {
+    action: id ? 'User Update' : 'User Create',
+    entityId: user.id,
+    entityLabel: user.email,
+    userEmail: actingUser.email,
+  });
+
   return json({ user: publicUser(user) }, id ? 200 : 201);
 }
 
 async function deleteUser(request, env, id) {
   assertUuid(id);
-  const { session } = await authenticate(request, env, ['administrator']);
-  await mutateStore(env, 'users', (store) => {
+  const { session, user: actingUser } = await authenticate(request, env, ['administrator']);
+  const deleted = await mutateStore(env, 'users', (store) => {
     const actor = userFromSession(store.users, session);
     requireRole(actor, ['administrator']);
     const index = store.users.findIndex((item) => item.id === id);
@@ -465,7 +515,15 @@ async function deleteUser(request, env, id) {
     if (store.users[index].role === 'administrator' && adminCount(store.users) <= 1) {
       throw new ApiError(409, 'The system must always have at least one administrator', 'LAST_ADMIN_REQUIRED');
     }
-    store.users.splice(index, 1);
+    const [user] = store.users.splice(index, 1);
+    return user;
+  });
+
+  await appendLogEntry(env, {
+    action: 'User Delete',
+    entityId: deleted.id,
+    entityLabel: deleted.email,
+    userEmail: actingUser.email,
   });
   return json({ ok: true }, 200, session.uid === id ? { 'Set-Cookie': expiredSessionCookie(request) } : {});
 }
@@ -486,6 +544,13 @@ async function updateSettings(request, env) {
     settings.updatedAt = new Date().toISOString();
     settings.updatedById = user.id;
   });
+
+  await appendLogEntry(env, {
+    action: 'Portal State Update',
+    entityId: null,
+    entityLabel: 'Portal',
+    userEmail: user.email,
+  });
   return json({ ok: true, mode: input.mode });
 }
 
@@ -503,6 +568,7 @@ function createStore(name) {
   if (name === 'articles') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, articles: [], createdAt: now, updatedAt: now };
   if (name === 'categories') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, categories: [], createdAt: now, updatedAt: now };
   if (name === 'settings') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, mode: 'private', updatedAt: now, updatedById: null };
+  if (name === 'logbook') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, entries: [], createdAt: now, updatedAt: now };
   throw new Error('Unknown store');
 }
 
@@ -537,6 +603,8 @@ function storeFromLegacy(name, legacy) {
       updatedAt: legacy.updatedAt || now,
     };
   }
+
+  if (name === 'logbook') return createStore('logbook');
 
   if (name === 'settings') {
     return {
@@ -637,7 +705,32 @@ function validateStore(name, data) {
     if (data.updatedById !== null && data.updatedById !== undefined && !isUuid(data.updatedById)) {
       throw new ApiError(500, 'Portal settings data is invalid', 'INVALID_DATABASE');
     }
+  } else if (name === 'logbook') {
+    if (!Array.isArray(data.entries)) throw new ApiError(500, 'Portal logbook data is invalid', 'INVALID_DATABASE');
+    for (const entry of data.entries) {
+      if (!isUuid(entry.id) || typeof entry.action !== 'string' || typeof entry.entityLabel !== 'string' ||
+          (entry.entityId !== null && !isUuid(entry.entityId)) || typeof entry.userEmail !== 'string' ||
+          typeof entry.createdAt !== 'string') {
+        throw new ApiError(500, 'Portal logbook data is invalid', 'INVALID_DATABASE');
+      }
+    }
   }
+}
+
+async function appendLogEntry(env, { action, entityId, entityLabel, userEmail }) {
+  const createdAt = new Date().toISOString();
+  return mutateStore(env, 'logbook', (store) => {
+    const entry = {
+      id: crypto.randomUUID(),
+      action,
+      entityId,
+      entityLabel,
+      userEmail,
+      createdAt,
+    };
+    store.entries.push(entry);
+    return entry;
+  });
 }
 
 function sortArticles(articles) { return [...articles].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
