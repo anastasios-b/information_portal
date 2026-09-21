@@ -35,9 +35,11 @@ test('UI preserves required routes, content controls and single-load behavior', 
   assert.match(app, /function PortalSearch/);
   assert.match(app, /type="search"/);
   assert.match(app, /Search articles…/);
-  assert.match(app, /visibleResults = hasQuery \? results\.slice\(0, 5\)/);
+  assert.match(app, /visibleResults = hasCriteria \? results\.slice\(0, 5\)/);
   assert.match(app, /View all results/);
   assert.match(app, /filterPortalArticles/);
+  assert.match(app, /Filter articles by category/);
+  assert.match(app, /filterPortalArticles\(articles, categories, query, categoryFilter\)/);
   assert.match(app, /All categories/);
   assert.match(app, /filteredArticles/);
   assert.match(app, /No matching articles/);
@@ -62,6 +64,7 @@ test('UI preserves required routes, content controls and single-load behavior', 
   assert.match(app, /All actions/);
   assert.match(app, /filteredEntries/);
   assert.match(styles, /\.logbook-action-header\{/);
+  assert.match(styles, /\.portal-search-controls\{/);
 
   assert.match(app, /function PortalSidebar/);
   assert.match(app, /Announcements/);
