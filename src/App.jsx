@@ -619,6 +619,45 @@ function Articles({ path, content, patchContent }) {
     };
   };
 
+  const insertMarkdown = (type) => {
+    const { start, end } = insertRangeRef.current;
+
+    setForm((current) => {
+      const safeStart = Math.min(start, current.content.length);
+      const safeEnd = Math.min(Math.max(end, safeStart), current.content.length);
+      const selected = current.content.slice(safeStart, safeEnd);
+      let replacement;
+
+      if (type === 'code') {
+        replacement = `\`\`\`\n${selected || 'code'}\n\`\`\``;
+      } else {
+        const level = Number(type.slice(1));
+        const prefix = `${'#'.repeat(level)} `;
+        replacement = selected
+          ? selected.split('\n').map((line) => `${prefix}${line}`).join('\n')
+          : `${prefix}Heading`;
+      }
+
+      const before = current.content.slice(0, safeStart);
+      const after = current.content.slice(safeEnd);
+      const leadingBreak = before && !before.endsWith('\n') ? '\n' : '';
+      const trailingBreak = after && !after.startsWith('\n') ? '\n' : '';
+      return {
+        ...current,
+        content: `${before}${leadingBreak}${replacement}${trailingBreak}${after}`,
+      };
+    });
+
+    requestAnimationFrame(() => {
+      const textarea = contentRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      const position = Math.min(start, textarea.value.length);
+      textarea.setSelectionRange(position, position);
+      rememberInsertionRange();
+    });
+  };
+
   const insertImageReference = (reference, width = 100) => {
     const { start, end } = insertRangeRef.current;
     const token = `[[image:${reference}|${width}]]`;
@@ -732,7 +771,30 @@ function Articles({ path, content, patchContent }) {
           {!categories.length && <span className="hint">No categories available.</span>}
         </fieldset>
         <Field label="Summary"><textarea rows="3" maxLength="600" value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} /></Field>
-        <Field label="Content"><textarea ref={contentRef} rows="14" required value={form.content} onSelect={rememberInsertionRange} onKeyUp={rememberInsertionRange} onClick={rememberInsertionRange} onChange={(e) => setForm({ ...form, content: e.target.value })} /></Field>
+        <Field label="Content">
+          <div className="markdown-editor">
+            <div className="markdown-toolbar" role="toolbar" aria-label="Article formatting">
+              {['h1', 'h2', 'h3'].map((type) => <button
+                type="button"
+                className="secondary markdown-tool"
+                title={`Insert ${type.toUpperCase()} heading`}
+                aria-label={`Insert ${type.toUpperCase()} heading`}
+                key={type}
+                onMouseDown={rememberInsertionRange}
+                onClick={() => insertMarkdown(type)}
+              >{type.toUpperCase()}</button>)}
+              <button
+                type="button"
+                className="secondary markdown-tool markdown-code-tool"
+                title="Insert code block"
+                aria-label="Insert code block"
+                onMouseDown={rememberInsertionRange}
+                onClick={() => insertMarkdown('code')}
+              >Code</button>
+            </div>
+            <textarea ref={contentRef} rows="14" required value={form.content} onSelect={rememberInsertionRange} onKeyUp={rememberInsertionRange} onClick={rememberInsertionRange} onChange={(e) => setForm({ ...form, content: e.target.value })} />
+          </div>
+        </Field>
         <div className="image-field">
           <span className="field-label">Add inline image</span>
           <div className="image-source-actions">
@@ -1225,6 +1287,8 @@ function extractInlineImages(content) {
 function articlePlainText(content) {
   return String(content || '')
     .replace(/\[\[image:[^|\]\r\n]+\|(25|50|75|100)\]\]/gi, ' ')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\`\`\`[^\n]*$/gm, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -1233,8 +1297,48 @@ function renderArticleContent(content) {
   const lines = String(content || '').split('\n');
   const nodes = [];
   let keyIndex = 0;
+  let inCodeBlock = false;
+  let codeLanguage = '';
+  let codeLines = [];
+
+  const pushCodeBlock = () => {
+    nodes.push(
+      <pre className="article-code-block" key={`code-${keyIndex++}`}>
+        <code data-language={codeLanguage || undefined}>{codeLines.join('\n')}</code>
+      </pre>,
+    );
+    codeLines = [];
+    codeLanguage = '';
+    inCodeBlock = false;
+  };
 
   lines.forEach((line, lineIndex) => {
+    if (inCodeBlock) {
+      if (/^\`\`\`\s*$/.test(line)) pushCodeBlock();
+      else codeLines.push(line);
+      return;
+    }
+
+    const fence = /^\`\`\`\s*([A-Za-z0-9_+.-]*)\s*$/.exec(line);
+    if (fence) {
+      inCodeBlock = true;
+      codeLanguage = fence[1] || '';
+      codeLines = [];
+      return;
+    }
+
+    const heading = /^(#{1,6})\s+(.+)$/.exec(line);
+    if (heading) {
+      const level = heading[1].length;
+      const HeadingTag = `h${level}`;
+      nodes.push(
+        <HeadingTag className={`article-markdown-heading article-markdown-h${level}`} key={`heading-${keyIndex++}`}>
+          {heading[2]}
+        </HeadingTag>,
+      );
+      return;
+    }
+
     const images = extractInlineImages(line);
     const onlyImages = images.length > 1 &&
       images.every((image) => image.width <= 50) &&
@@ -1282,6 +1386,7 @@ function renderArticleContent(content) {
     }
   });
 
+  if (inCodeBlock) pushCodeBlock();
   return nodes;
 }
 
