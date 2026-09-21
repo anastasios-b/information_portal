@@ -629,16 +629,23 @@ async function readStore(env, name) {
       return { data, etag: object.etag };
     }
 
-    const legacyObject = await env.PORTAL_DATA.get(LEGACY_DB_KEY);
-    const data = legacyObject ? storeFromLegacy(name, await legacyObject.json()) : createStore(name);
-    validateStore(name, data);
+    const data = name === 'logbook'
+      ? createStore('logbook')
+      : (() => null)();
 
-    const created = await env.PORTAL_DATA.put(key, JSON.stringify(data), {
+    let migrated = data;
+    if (!migrated) {
+      const legacyObject = await env.PORTAL_DATA.get(LEGACY_DB_KEY);
+      migrated = legacyObject ? storeFromLegacy(name, await legacyObject.json()) : createStore(name);
+    }
+    validateStore(name, migrated);
+
+    const created = await env.PORTAL_DATA.put(key, JSON.stringify(migrated), {
       onlyIf: new Headers({ 'If-None-Match': '*' }),
       httpMetadata: { contentType: 'application/json; charset=utf-8' },
     });
 
-    if (created) return { data, etag: created.etag };
+    if (created) return { data: migrated, etag: created.etag };
 
     object = await env.PORTAL_DATA.get(key);
     if (!object) throw new Error('Store creation race could not be resolved');
