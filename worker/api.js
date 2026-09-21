@@ -437,7 +437,7 @@ async function deleteCategory(request, env, id) {
 }
 
 async function listLogbook(request, env) {
-  await authenticate(request, env, ['administrator', 'editor']);
+  await authenticate(request, env, ['administrator']);
   const { data: logbookStore } = await readStore(env, 'logbook');
   const entries = [...logbookStore.entries].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   return json({ entries });
