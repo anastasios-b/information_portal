@@ -1,3 +1,4 @@
+const contentRequests = new Map();
 const PORTAL_CACHE_PREFIX = 'information-portal:public-cache:v1:';
 const PORTAL_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -92,4 +93,22 @@ export function articleImageUrl(filename) {
 
 export function listArticleImages() {
   return request('/api/article-images', { method: 'GET' });
+}
+
+
+export function loadContentOnce(cacheKey, { manage = false } = {}) {
+  const key = `${cacheKey}:${manage ? 'manage' : 'portal'}`;
+  if (!contentRequests.has(key)) {
+    const requestPromise = request(`/api/content${manage ? '?manage=1' : ''}`, { method: 'GET' })
+      .catch((error) => {
+        contentRequests.delete(key);
+        throw error;
+      });
+    contentRequests.set(key, requestPromise);
+  }
+  return contentRequests.get(key);
+}
+
+export function resetContentRequests() {
+  contentRequests.clear();
 }
