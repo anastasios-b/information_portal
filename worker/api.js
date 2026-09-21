@@ -15,6 +15,7 @@ const SESSION_COOKIE = 'portal_session';
 const SESSION_TTL_SECONDS = 12 * 60 * 60;
 const PBKDF2_ITERATIONS = 60000;
 const STORE_SCHEMA_VERSION = 1;
+const DEFAULT_PORTAL_NAME = 'Information Portal';
 const ROLES = new Set(['administrator', 'editor', 'reader']);
 const ARTICLE_STATUSES = new Set(['draft', 'published']);
 const encoder = new TextEncoder();
@@ -59,6 +60,8 @@ export async function handleApiRequest(request, env, ctx) {
     if (parts[0] === 'articles') {
       if (method === 'GET' && parts.length === 1) return await listArticles(request, env, url.searchParams.get('manage') === '1');
       if (method === 'POST' && parts.length === 3 && parts[2] === 'comments') return await addArticleComment(request, env, parts[1]);
+      if (method === 'PUT' && parts.length === 4 && parts[2] === 'comments') return await updateArticleComment(request, env, parts[1], parts[3]);
+      if (method === 'DELETE' && parts.length === 4 && parts[2] === 'comments') return await deleteArticleComment(request, env, parts[1], parts[3]);
       if (method === 'GET' && parts.length === 2) return await getArticle(request, env, parts[1]);
       if (method === 'POST' && parts.length === 1) return await saveArticle(request, env, ctx);
       if (method === 'PUT' && parts.length === 2) return await saveArticle(request, env, ctx, parts[1]);
@@ -130,6 +133,7 @@ async function bootstrap(request, env) {
     setupRequired: adminCount(usersStore.users) === 0,
     setupTokenRequired: Boolean(env.BOOTSTRAP_TOKEN),
     mode: settings.mode,
+    portalName: portalName(settings),
     user: user ? publicUser(user) : null,
     adminCount: adminCount(usersStore.users),
   });
@@ -332,6 +336,7 @@ async function getContent(request, env, manage) {
 
   return json({
     mode: settings.mode,
+    portalName: portalName(settings),
     user: user ? publicUser(user) : null,
     articles,
     categories: sortCategories(categoryStore.categories),
@@ -409,10 +414,7 @@ async function addArticleComment(request, env, articleId) {
   }
 
   const input = await jsonBody(request);
-  const content = String(input.content || '').trim();
-  if (!content || content.length > 4000) {
-    throw new ApiError(400, 'Comment is required and must be at most 4000 characters', 'INVALID_COMMENT');
-  }
+  const content = validateCommentContent(input.content);
 
   const comment = await mutateStore(env, 'comments', (store) => {
     const created = {
@@ -423,12 +425,60 @@ async function addArticleComment(request, env, articleId) {
       userEmail: user.email,
       content,
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
     store.comments.push(created);
     return created;
   });
 
   return json({ comment }, 201);
+}
+
+async function updateArticleComment(request, env, articleId, commentId) {
+  assertUuid(articleId);
+  assertUuid(commentId);
+  const { data: settings } = await readStore(env, 'settings');
+  if (settings.mode !== 'private') {
+    throw new ApiError(403, 'Comments are available only while the portal is private', 'COMMENTS_PRIVATE_ONLY');
+  }
+
+  const { user } = await authenticate(request, env, ['administrator', 'editor', 'reader']);
+  const input = await jsonBody(request);
+  const content = validateCommentContent(input.content);
+
+  const comment = await mutateStore(env, 'comments', (store) => {
+    const existing = store.comments.find((item) => item.id === commentId && item.articleId === articleId);
+    if (!existing) throw new ApiError(404, 'Comment not found', 'COMMENT_NOT_FOUND');
+    if (existing.userId !== user.id) {
+      throw new ApiError(403, 'You can edit only your own comments', 'COMMENT_NOT_OWNED');
+    }
+    existing.content = content;
+    existing.updatedAt = new Date().toISOString();
+    return existing;
+  });
+
+  return json({ comment });
+}
+
+async function deleteArticleComment(request, env, articleId, commentId) {
+  assertUuid(articleId);
+  assertUuid(commentId);
+  const { data: settings } = await readStore(env, 'settings');
+  if (settings.mode !== 'private') {
+    throw new ApiError(403, 'Comments are available only while the portal is private', 'COMMENTS_PRIVATE_ONLY');
+  }
+
+  const { user } = await authenticate(request, env, ['administrator', 'editor', 'reader']);
+  await mutateStore(env, 'comments', (store) => {
+    const index = store.comments.findIndex((item) => item.id === commentId && item.articleId === articleId);
+    if (index < 0) throw new ApiError(404, 'Comment not found', 'COMMENT_NOT_FOUND');
+    if (store.comments[index].userId !== user.id) {
+      throw new ApiError(403, 'You can delete only your own comments', 'COMMENT_NOT_OWNED');
+    }
+    store.comments.splice(index, 1);
+  });
+
+  return json({ ok: true });
 }
 
 async function listArticles(request, env, manage) {
@@ -726,31 +776,70 @@ async function deleteUser(request, env, ctx, id) {
 async function updateSettings(request, env, ctx) {
   const { user } = await authenticate(request, env, ['administrator']);
   const input = await jsonBody(request);
-  if (!['private', 'public'].includes(input.mode)) throw new ApiError(400, 'Mode must be private or public', 'INVALID_MODE');
-  const password = String(input.password ?? '');
-  if (!password) throw new ApiError(400, 'Administrator password is required', 'PASSWORD_REQUIRED');
-  if (!(await verifyPassword(password, user.password))) {
-    throw new ApiError(401, 'Incorrect administrator password', 'INVALID_CREDENTIALS');
+  const hasMode = input.mode !== undefined;
+  const hasPortalName = input.portalName !== undefined;
+  if (!hasMode && !hasPortalName) {
+    throw new ApiError(400, 'No settings change was provided', 'INVALID_SETTINGS');
   }
 
+  if (hasMode && !['private', 'public'].includes(input.mode)) {
+    throw new ApiError(400, 'Mode must be private or public', 'INVALID_MODE');
+  }
+
+  if (hasMode) {
+    const password = String(input.password ?? '');
+    if (!password) throw new ApiError(400, 'Administrator password is required', 'PASSWORD_REQUIRED');
+    if (!(await verifyPassword(password, user.password))) {
+      throw new ApiError(401, 'Incorrect administrator password', 'INVALID_CREDENTIALS');
+    }
+  }
+
+  const nextPortalName = hasPortalName ? validatePortalName(input.portalName) : null;
   let previousMode = null;
-  await mutateStore(env, 'settings', (settings) => {
-    if (settings.mode === input.mode) throw new ApiError(409, `Portal is already ${input.mode}`, 'MODE_UNCHANGED');
-    previousMode = settings.mode;
-    settings.mode = input.mode;
+  let previousPortalName = null;
+  let portalNameChanged = false;
+
+  const updated = await mutateStore(env, 'settings', (settings) => {
+    if (hasMode) {
+      if (settings.mode === input.mode) throw new ApiError(409, `Portal is already ${input.mode}`, 'MODE_UNCHANGED');
+      previousMode = settings.mode;
+      settings.mode = input.mode;
+    }
+
+    if (hasPortalName) {
+      previousPortalName = portalName(settings);
+      portalNameChanged = previousPortalName !== nextPortalName;
+      settings.portalName = nextPortalName;
+    }
+
     settings.updatedAt = new Date().toISOString();
     settings.updatedById = user.id;
+    return settings;
   });
 
-  scheduleLogEntry(ctx, env, {
-    action: `Portal State Update to ${input.mode === 'public' ? 'Public' : 'Private'}`,
-    entityId: null,
-    entityLabel: 'Portal',
-    previousEntityId: null,
-    previousEntityLabel: previousMode === 'public' ? 'Public' : 'Private',
-    userEmail: user.email,
-  });
-  return json({ ok: true, mode: input.mode });
+  if (hasMode) {
+    scheduleLogEntry(ctx, env, {
+      action: `Portal State Update to ${input.mode === 'public' ? 'Public' : 'Private'}`,
+      entityId: null,
+      entityLabel: 'Portal',
+      previousEntityId: null,
+      previousEntityLabel: previousMode === 'public' ? 'Public' : 'Private',
+      userEmail: user.email,
+    });
+  }
+
+  if (portalNameChanged) {
+    scheduleLogEntry(ctx, env, {
+      action: 'Portal Name Update',
+      entityId: null,
+      entityLabel: 'Portal',
+      previousEntityId: null,
+      previousEntityLabel: previousPortalName,
+      userEmail: user.email,
+    });
+  }
+
+  return json({ ok: true, mode: updated.mode, portalName: portalName(updated) });
 }
 
 async function authenticate(request, env, allowedRoles) {
@@ -766,7 +855,7 @@ function createStore(name) {
   if (name === 'users') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, users: [], createdAt: now, updatedAt: now };
   if (name === 'articles') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, articles: [], createdAt: now, updatedAt: now };
   if (name === 'categories') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, categories: [], createdAt: now, updatedAt: now };
-  if (name === 'settings') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, mode: 'private', updatedAt: now, updatedById: null };
+  if (name === 'settings') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, mode: 'private', portalName: DEFAULT_PORTAL_NAME, updatedAt: now, updatedById: null };
   if (name === 'logbook') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, entries: [], createdAt: now, updatedAt: now };
   if (name === 'announcements') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, announcements: [], createdAt: now, updatedAt: now };
   if (name === 'comments') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, comments: [], createdAt: now, updatedAt: now };
@@ -812,6 +901,7 @@ function storeFromLegacy(name, legacy) {
       id: isUuid(legacy.settings?.id) ? legacy.settings.id : crypto.randomUUID(),
       schemaVersion: 1,
       mode: ['private', 'public'].includes(legacy.settings?.mode) ? legacy.settings.mode : 'private',
+      portalName: validPortalNameOrDefault(legacy.settings?.portalName),
       updatedAt: legacy.settings?.updatedAt || legacy.updatedAt || now,
       updatedById: legacy.settings?.updatedById ?? null,
     };
@@ -913,6 +1003,9 @@ function validateStore(name, data) {
     }
   } else if (name === 'settings') {
     if (!['private', 'public'].includes(data.mode)) throw new ApiError(500, 'Portal settings data is invalid', 'INVALID_DATABASE');
+    if (data.portalName !== undefined && (typeof data.portalName !== 'string' || !data.portalName.trim() || data.portalName.trim().length > 120)) {
+      throw new ApiError(500, 'Portal settings data is invalid', 'INVALID_DATABASE');
+    }
     if (data.updatedById !== null && data.updatedById !== undefined && !isUuid(data.updatedById)) {
       throw new ApiError(500, 'Portal settings data is invalid', 'INVALID_DATABASE');
     }
@@ -930,7 +1023,8 @@ function validateStore(name, data) {
     for (const comment of data.comments) {
       if (!isUuid(comment.id) || !isUuid(comment.articleId) || !isUuid(comment.userId) ||
           typeof comment.userFullName !== 'string' || typeof comment.userEmail !== 'string' ||
-          typeof comment.content !== 'string' || typeof comment.createdAt !== 'string') {
+          typeof comment.content !== 'string' || typeof comment.createdAt !== 'string' ||
+          (comment.updatedAt !== undefined && typeof comment.updatedAt !== 'string')) {
         throw new ApiError(500, 'Portal comments data is invalid', 'INVALID_DATABASE');
       }
     }
@@ -1126,6 +1220,31 @@ async function jsonBody(request) {
   }
   try { return await request.json(); }
   catch { throw new ApiError(400, 'Invalid JSON body', 'INVALID_JSON'); }
+}
+
+function validatePortalName(value) {
+  const name = String(value || '').trim();
+  if (!name || name.length > 120) {
+    throw new ApiError(400, 'Portal name is required and must be at most 120 characters', 'INVALID_PORTAL_NAME');
+  }
+  return name;
+}
+
+function validPortalNameOrDefault(value) {
+  const name = String(value || '').trim();
+  return name && name.length <= 120 ? name : DEFAULT_PORTAL_NAME;
+}
+
+function portalName(settings) {
+  return validPortalNameOrDefault(settings?.portalName);
+}
+
+function validateCommentContent(value) {
+  const content = String(value || '').trim();
+  if (!content || content.length > 4000) {
+    throw new ApiError(400, 'Comment is required and must be at most 4000 characters', 'INVALID_COMMENT');
+  }
+  return content;
 }
 
 function validateFullName(value) {
