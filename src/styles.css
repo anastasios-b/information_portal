@@ -98,14 +98,19 @@
 
 .logbook-card{overflow:hidden;padding:0}
 .logbook-table{display:grid;min-width:980px}
-.logbook-row{display:grid;grid-template-columns:minmax(150px,.9fr) minmax(240px,1.45fr) minmax(240px,1.45fr) minmax(190px,1fr) minmax(180px,1fr);align-items:stretch}
-.logbook-row>div{min-width:0;height:100%;padding:.85rem 1rem;border-bottom:1px solid #ecece7;overflow:hidden;text-overflow:ellipsis;display:flex;flex-direction:column;justify-content:center}
+.logbook-row{display:grid;grid-template-columns:18% 22% 22% 22% 16%;grid-template-rows:auto;align-items:stretch}
+.logbook-row>div{min-width:0;height:100%;padding:.85rem 1rem;border-bottom:1px solid #ecece7;overflow:hidden;overflow-wrap:anywhere;word-break:break-word;display:flex;flex-direction:column;justify-content:center}
+.logbook-row>div:nth-child(1){grid-column:1;grid-row:1}
+.logbook-row>div:nth-child(2){grid-column:2;grid-row:1}
+.logbook-row>div:nth-child(3){grid-column:3;grid-row:1}
+.logbook-row>div:nth-child(4){grid-column:4;grid-row:1}
+.logbook-row>div:nth-child(5){grid-column:5;grid-row:1}
 .logbook-head{background:#f7f7f3;font-size:.8rem;font-weight:800;color:#555b53}
 .logbook-head>div{border-bottom:1px solid #dedfd8}
 .logbook-row:last-child>div{border-bottom:0}
 .logbook-entity{display:flex;flex-direction:column;justify-content:center;gap:.2rem}
-.logbook-entity code{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.75rem;color:#747970}
-.logbook-entity span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.logbook-entity code{display:block;max-width:100%;overflow-wrap:anywhere;word-break:break-word;font-size:.75rem;color:#747970}
+.logbook-entity span{max-width:100%;overflow-wrap:anywhere;word-break:break-word}
 .logbook-empty{color:#9a9e96}
 .logbook-card>.empty{margin:1rem}
 @media(max-width:900px){.logbook-card{overflow:auto}}
