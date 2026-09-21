@@ -172,3 +172,8 @@
 .comment-edit{display:grid;gap:.65rem;margin-top:.7rem}
 .comment-edit textarea{width:100%;max-width:100%;min-width:0;resize:vertical;border:1px solid #d4d6cf;border-radius:9px;padding:.7rem .75rem;background:#fff;color:#1d201c;outline:none}
 .comment-edit textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(231,78,36,.12)}
+
+.announcement-record-title{display:flex;align-items:center;gap:.55rem;flex-wrap:wrap}
+.announcement-status{display:inline-flex;align-items:center;padding:.2rem .48rem;border-radius:999px;font-size:.72rem;font-weight:800;line-height:1;border:1px solid transparent}
+.announcement-status.active{background:#edf8f1;border-color:#b8dfc4;color:#26713d}
+.announcement-status.stopped{background:#fff2ea;border-color:#f0bf9f;color:#a4511f}
