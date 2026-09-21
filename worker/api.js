@@ -529,7 +529,7 @@ async function listArticles(request, env, manage) {
     readStore(env, 'categories'),
   ]);
   return json({
-    articles: sortArticles(articleStore.articles.filter((article) =>
+    articles: sortArticlesByCreatedAt(articleStore.articles.filter((article) =>
       article.status === 'published' && articleHasVisibleCategory(article, categoryStore.categories),
     )).map((article) => portalArticle(article, categoryStore.categories)),
   });
@@ -607,6 +607,8 @@ async function saveArticle(request, env, ctx, id = null) {
     return created;
   });
 
+  await refreshInitialArticlesSafely(env);
+
   scheduleLogEntry(ctx, env, {
     action: id ? 'Article Update' : 'Article Create',
     entityId: article.id,
@@ -629,6 +631,8 @@ async function deleteArticle(request, env, ctx, id) {
     const [article] = store.articles.splice(index, 1);
     return article;
   });
+
+  await refreshInitialArticlesSafely(env);
 
   scheduleLogEntry(ctx, env, {
     action: 'Article Delete',
@@ -695,6 +699,8 @@ async function saveCategory(request, env, ctx, id = null) {
     return created;
   });
 
+  await refreshInitialArticlesSafely(env);
+
   scheduleLogEntry(ctx, env, {
     action: id ? 'Category Update' : 'Category Create',
     entityId: category.id,
@@ -722,6 +728,8 @@ async function deleteCategory(request, env, ctx, id) {
     const [category] = store.categories.splice(index, 1);
     return category;
   });
+
+  await refreshInitialArticlesSafely(env);
 
   scheduleLogEntry(ctx, env, {
     action: 'Category Delete',
@@ -843,7 +851,8 @@ async function updateSettings(request, env, ctx) {
   const input = await jsonBody(request);
   const hasMode = input.mode !== undefined;
   const hasPortalName = input.portalName !== undefined;
-  if (!hasMode && !hasPortalName) {
+  const hasInitialArticles = input.initialArticles !== undefined;
+  if (!hasMode && !hasPortalName && !hasInitialArticles) {
     throw new ApiError(400, 'No settings change was provided', 'INVALID_SETTINGS');
   }
 
@@ -860,9 +869,12 @@ async function updateSettings(request, env, ctx) {
   }
 
   const nextPortalName = hasPortalName ? validatePortalName(input.portalName) : null;
+  const nextInitialArticles = hasInitialArticles ? validateInitialArticles(input.initialArticles) : null;
   let previousMode = null;
   let previousPortalName = null;
+  let previousInitialArticles = null;
   let portalNameChanged = false;
+  let initialArticlesChanged = false;
 
   const updated = await mutateStore(env, 'settings', (settings) => {
     if (hasMode) {
@@ -875,6 +887,12 @@ async function updateSettings(request, env, ctx) {
       previousPortalName = portalName(settings);
       portalNameChanged = previousPortalName !== nextPortalName;
       settings.portalName = nextPortalName;
+    }
+
+    if (hasInitialArticles) {
+      previousInitialArticles = initialArticlesCount(settings);
+      initialArticlesChanged = previousInitialArticles !== nextInitialArticles;
+      settings.initialArticles = nextInitialArticles;
     }
 
     settings.updatedAt = new Date().toISOString();
@@ -904,7 +922,24 @@ async function updateSettings(request, env, ctx) {
     });
   }
 
-  return json({ ok: true, mode: updated.mode, portalName: portalName(updated) });
+  if (initialArticlesChanged) {
+    await refreshInitialArticlesSafely(env);
+    scheduleLogEntry(ctx, env, {
+      action: 'Initial Articles Update',
+      entityId: null,
+      entityLabel: 'Portal',
+      previousEntityId: null,
+      previousEntityLabel: String(previousInitialArticles),
+      userEmail: user.email,
+    });
+  }
+
+  return json({
+    ok: true,
+    mode: updated.mode,
+    portalName: portalName(updated),
+    initialArticles: initialArticlesCount(updated),
+  });
 }
 
 async function authenticate(request, env, allowedRoles) {
