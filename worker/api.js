@@ -660,7 +660,7 @@ async function saveUser(request, env, ctx, id = null) {
       if (existing.role === 'administrator' && role !== 'administrator' && adminCount(store.users) <= 1) {
         throw new ApiError(409, 'The system must always have at least one administrator', 'LAST_ADMIN_REQUIRED');
       }
-      existing.fullName = requestedFullName ?? String(existing.fullName || '').trim() || existing.email;
+      existing.fullName = requestedFullName ?? (String(existing.fullName || '').trim() || existing.email);
       existing.email = email;
       existing.role = role;
       existing.updatedAt = now;
