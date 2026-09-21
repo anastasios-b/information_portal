@@ -458,3 +458,48 @@ test('audit writes are scheduled with waitUntil without blocking the response pa
   await Promise.all(result.ctx.pending);
   assert.equal(e.PORTAL_DATA.data(KEYS.logbook).entries.at(-1).action, 'Portal State Update to Public');
 });
+
+
+test('article update logbook captures every changed previous field', async () => {
+  const e = env();
+  const admin = await setupAdmin(e);
+  const firstCategory = await createCategory(e, admin.cookie, 'First category');
+  const secondCategory = await createCategory(e, admin.cookie, 'Second category');
+
+  let result = await call(e, '/api/articles', {
+    method: 'POST',
+    cookie: admin.cookie,
+    body: {
+      title: 'Original title',
+      summary: 'Original summary',
+      content: 'Original content',
+      status: 'draft',
+      categoryId: firstCategory.id,
+    },
+  });
+  assert.equal(result.response.status, 201);
+  const article = result.payload.article;
+
+  result = await call(e, `/api/articles/${article.id}`, {
+    method: 'PUT',
+    cookie: admin.cookie,
+    body: {
+      title: 'Updated title',
+      summary: 'Updated summary',
+      content: 'Updated content',
+      status: 'published',
+      categoryId: secondCategory.id,
+    },
+  });
+  assert.equal(result.response.status, 200);
+
+  result = await call(e, '/api/admin/logbook', { cookie: admin.cookie });
+  const entry = result.payload.entries.find((item) => item.action === 'Article Update' && item.entityId === article.id);
+  assert.deepEqual(entry.previousFields, [
+    { field: 'Title', value: 'Original title' },
+    { field: 'Summary', value: 'Original summary' },
+    { field: 'Content', value: 'Original content' },
+    { field: 'Status', value: 'draft' },
+    { field: 'Category', value: 'First category', referenceId: firstCategory.id },
+  ]);
+});
