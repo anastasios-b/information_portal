@@ -72,6 +72,13 @@ test('UI preserves required routes, content controls and single-load behavior', 
   assert.match(app, />Show all</);
   assert.match(app, /className="announcement-drawer"/);
   assert.match(app, /function Announcements/);
+  assert.match(app, /announcement-drag-handle/);
+  assert.match(app, /draggable/);
+  assert.match(app, /onDragStart/);
+  assert.match(app, /onDragOver/);
+  assert.match(app, /onMouseLeave/);
+  assert.match(app, /\/api\/announcements\/order/);
+  assert.match(app, /persistAnnouncementOrder/);
   assert.match(app, /Start date/);
   assert.match(app, /End date \(optional\)/);
   assert.match(app, /announcement-status/);
@@ -79,6 +86,8 @@ test('UI preserves required routes, content controls and single-load behavior', 
   assert.match(app, /Active/);
   assert.match(styles, /\.announcement-status\.active\{/);
   assert.match(styles, /\.announcement-status\.stopped\{/);
+  assert.match(styles, /\.announcement-order-record\{/);
+  assert.match(styles, /\.announcement-drag-handle\{/);
 
   assert.match(app, /function ArticlePage/);
   assert.match(app, /Comments/);
