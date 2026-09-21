@@ -423,16 +423,15 @@ function NavButton({ path, current, children }) {
   return <button className={selected ? 'active' : ''} disabled={selected} onClick={() => navigate(path)}>{children}</button>;
 }
 
-function Articles({ path }) {
-  const empty = { title: '', summary: '', content: '', status: 'draft', categoryId: '' };
+function Articles({ path, content, patchContent }) {
+  const empty = { title: '', summary: '', content: '', status: 'draft', categoryIds: [] };
   const routeEditId = /^\/admin\/articles\/([0-9a-f-]{36})$/i.exec(path)?.[1];
-  const [items, setItems] = useState([]);
-  const [categories, setCategories] = useState([]);
+  const items = content?.articles || [];
+  const categories = content?.categories || [];
   const [form, setForm] = useState(empty);
   const [id, setId] = useState();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [imageBusy, setImageBusy] = useState(false);
   const [mediaOpen, setMediaOpen] = useState(false);
   const [mediaItems, setMediaItems] = useState([]);
@@ -441,20 +440,7 @@ function Articles({ path }) {
   const contentRef = useRef(null);
   const insertRangeRef = useRef({ start: 0, end: 0 });
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const [articleData, categoryData] = await Promise.all([api('/api/articles?manage=1'), api('/api/categories?manage=1')]);
-      setItems(articleData.articles); setCategories(categoryData.categories); setError('');
-    } catch (err) { setError(err.message); }
-    finally { setLoading(false); }
-  };
-
-  useEffect(() => { load(); }, []);
-
   useEffect(() => {
-    if (loading) return;
-
     if (!routeEditId) {
       if (id) {
         setId(undefined);
@@ -479,15 +465,15 @@ function Articles({ path }) {
         summary: article.summary,
         content: article.content,
         status: article.status,
-        categoryId: article.categoryId || '',
+        categoryIds: article.categoryIds || [],
       });
       setError('');
     }
-  }, [routeEditId, loading, items, id]);
+  }, [routeEditId, items, id]);
 
   const categoryMap = useMemo(() => new Map(categories.map((category) => [category.id, category.name])), [categories]);
   const inlineImages = useMemo(() => extractInlineImages(form.content), [form.content]);
-  const previewCategory = categoryMap.get(form.categoryId) || 'Uncategorized';
+  const previewCategories = form.categoryIds.map((categoryId) => categoryMap.get(categoryId)).filter(Boolean);
 
   const edit = (article) => {
     navigate(`/admin/articles/${article.id}`);
@@ -507,9 +493,17 @@ function Articles({ path }) {
         method: id ? 'PUT' : 'POST',
         body: JSON.stringify(form),
       });
-      clearPortalCache();
-      await load();
-      if (!id) navigate(`/admin/articles/${result.article.id}`);
+      const saved = result.article;
+      patchContent((current, meta) => {
+        const remaining = (current.articles || []).filter((article) => article.id !== saved.id);
+        const shouldInclude = meta.manage || saved.status === 'published';
+        return {
+          ...current,
+          articles: (shouldInclude ? [saved, ...remaining] : remaining)
+            .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
+        };
+      });
+      if (!id) navigate(`/admin/articles/${saved.id}`);
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
 
@@ -517,10 +511,22 @@ function Articles({ path }) {
     if (!confirm(`Delete "${article.title}"?`)) return;
     try {
       await api(`/api/articles/${article.id}`, { method: 'DELETE', body: '{}' });
-      clearPortalCache();
+      patchContent((current) => ({
+        ...current,
+        articles: (current.articles || []).filter((item) => item.id !== article.id),
+        comments: (current.comments || []).filter((comment) => comment.articleId !== article.id),
+      }));
       if (routeEditId === article.id) navigate('/admin/articles');
-      await load();
     } catch (err) { setError(err.message); }
+  };
+
+  const toggleCategory = (categoryId) => {
+    setForm((current) => ({
+      ...current,
+      categoryIds: current.categoryIds.includes(categoryId)
+        ? current.categoryIds.filter((value) => value !== categoryId)
+        : [...current.categoryIds, categoryId],
+    }));
   };
 
   const rememberInsertionRange = () => {
@@ -630,12 +636,19 @@ function Articles({ path }) {
 
   return <section>
     <Head title="Articles" text="Administrators and editors can create, import, edit and delete articles." />
-    {!loading && !categories.length && <div className="notice">Create at least one category before creating an article.<button className="secondary" onClick={() => navigate('/admin/categories')}>Manage categories</button></div>}
+    {!categories.length && <div className="notice">Create at least one category before creating an article.<button className="secondary" onClick={() => navigate('/admin/categories')}>Manage categories</button></div>}
     <div className="cols">
       <form className="card form" onSubmit={save}>
         <h2>{id ? 'Edit article' : 'New article'}</h2>
         <Field label="Title"><input required maxLength="200" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
-        <Field label="Category">{loading ? <Skeleton height="41px" /> : <select required value={form.categoryId} onChange={(e) => setForm({ ...form, categoryId: e.target.value })}><option value="">Select category</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select>}</Field>
+        <fieldset className="category-checklist">
+          <legend>Categories</legend>
+          {categories.map((category) => <label className="category-option" key={category.id}>
+            <input type="checkbox" checked={form.categoryIds.includes(category.id)} onChange={() => toggleCategory(category.id)} />
+            <span>{category.name}</span>
+          </label>)}
+          {!categories.length && <span className="hint">No categories available.</span>}
+        </fieldset>
         <Field label="Summary"><textarea rows="3" maxLength="600" value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} /></Field>
         <Field label="Content"><textarea ref={contentRef} rows="14" required value={form.content} onSelect={rememberInsertionRange} onKeyUp={rememberInsertionRange} onClick={rememberInsertionRange} onChange={(e) => setForm({ ...form, content: e.target.value })} /></Field>
         <div className="image-field">
@@ -664,7 +677,7 @@ function Articles({ path }) {
         <Field label="Status"><select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}><option value="draft">Draft</option><option value="published">Published</option></select></Field>
         <Field label="Import .txt or .md"><input type="file" accept=".txt,.md,text/plain,text/markdown" onChange={upload} /></Field>
         {error && <ErrorBox text={error} />}
-        <button disabled={busy || !categories.length}>{busy ? 'Saving…' : id ? 'Save changes' : 'Create article'}</button>
+        <button disabled={busy || !categories.length || !form.categoryIds.length}>{busy ? 'Saving…' : id ? 'Save changes' : 'Create article'}</button>
         {id && <button type="button" className="secondary" onClick={reset}>Cancel</button>}
       </form>
 
@@ -674,16 +687,18 @@ function Articles({ path }) {
           <span className="pill">{form.status}</span>
         </div>
         <article className="article-document preview-document">
-          <div className="article-meta"><span className="tag">{previewCategory}</span></div>
+          <div className="article-meta">
+            {previewCategories.length ? previewCategories.map((name) => <span className="tag" key={name}>{name}</span>) : <span className="tag">Uncategorized</span>}
+          </div>
           <h1>{form.title || 'Untitled article'}</h1>
           {form.summary && <p className="article-summary">{form.summary}</p>}
           <div className="article-body">
             {form.content ? renderArticleContent(form.content) : <p className="preview-empty">Article content will appear here.</p>}
           </div>
         </article>
-      </div> : <div className="card"><h2>Existing articles</h2><div className="records" aria-busy={loading}>
-        {loading ? <RecordSkeleton count={4} /> : items.map((article) => <div className="record" key={article.id}>
-          <div><b>{article.title}</b><small>{categoryMap.get(article.categoryId) || 'Uncategorized'} · {article.status} · {article.id}</small></div>
+      </div> : <div className="card"><h2>Existing articles</h2><div className="records">
+        {items.map((article) => <div className="record" key={article.id}>
+          <div><b>{article.title}</b><small>{(article.categoryIds || []).map((categoryId) => categoryMap.get(categoryId)).filter(Boolean).join(', ') || 'Uncategorized'} · {article.status} · {article.id}</small></div>
           <div><button className="article-edit" onClick={() => edit(article)}>Edit</button><button className="article-delete" onClick={() => remove(article)}>Delete</button></div>
         </div>)}
       </div></div>}
@@ -707,28 +722,28 @@ function Articles({ path }) {
   </section>;
 }
 
-function Categories() {
-  const [items, setItems] = useState([]);
+function Categories({ content, patchContent }) {
+  const items = content?.categories || [];
   const [name, setName] = useState('');
   const [id, setId] = useState();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(true);
-
-  const load = async () => {
-    setLoading(true);
-    try { const data = await api('/api/categories?manage=1'); setItems(data.categories); setError(''); }
-    catch (err) { setError(err.message); }
-    finally { setLoading(false); }
-  };
-  useEffect(() => { load(); }, []);
 
   const reset = () => { setId(undefined); setName(''); setError(''); };
   const save = async (event) => {
     event.preventDefault(); setBusy(true); setError('');
     try {
-      await api(id ? `/api/categories/${id}` : '/api/categories', { method: id ? 'PUT' : 'POST', body: JSON.stringify({ name }) });
-      clearPortalCache(); reset(); await load();
+      const result = await api(id ? `/api/categories/${id}` : '/api/categories', {
+        method: id ? 'PUT' : 'POST',
+        body: JSON.stringify({ name }),
+      });
+      const saved = result.category;
+      patchContent((current) => ({
+        ...current,
+        categories: [saved, ...(current.categories || []).filter((category) => category.id !== saved.id)]
+          .sort((a, b) => a.name.localeCompare(b.name)),
+      }));
+      reset();
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
   const edit = (category) => { setId(category.id); setName(category.name); setError(''); };
@@ -736,8 +751,11 @@ function Categories() {
     if (!confirm(`Delete category "${category.name}"?`)) return;
     try {
       await api(`/api/categories/${category.id}`, { method: 'DELETE', body: '{}' });
-      clearPortalCache(); if (id === category.id) reset();
-      await load();
+      patchContent((current) => ({
+        ...current,
+        categories: (current.categories || []).filter((item) => item.id !== category.id),
+      }));
+      if (id === category.id) reset();
     } catch (err) { setError(err.message); }
   };
 
@@ -751,14 +769,111 @@ function Categories() {
         <button disabled={busy}>{busy ? 'Saving…' : id ? 'Save category' : 'Create category'}</button>
         {id && <button type="button" className="secondary" onClick={reset}>Cancel</button>}
       </form>
-      <div className="card"><h2>Existing categories</h2><div className="records" aria-busy={loading}>
-        {loading ? <RecordSkeleton count={4} /> : items.map((category) => <div className="record" key={category.id}>
+      <div className="card"><h2>Existing categories</h2><div className="records">
+        {items.map((category) => <div className="record" key={category.id}>
           <div><b>{category.name}</b><small>{category.id}</small></div>
           <div><button className="secondary" onClick={() => edit(category)}>Edit</button><button className="danger" onClick={() => remove(category)}>Delete</button></div>
         </div>)}
-      </div>{!loading && !items.length && <p className="hint">No categories yet.</p>}</div>
+      </div>{!items.length && <p className="hint">No categories yet.</p>}</div>
     </div>
   </section>;
+}
+
+function toLocalDateTimeValue(value = new Date().toISOString()) {
+  const date = new Date(value);
+  const shifted = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return shifted.toISOString().slice(0, 16);
+}
+
+function Announcements({ content, patchContent }) {
+  const empty = () => ({ title: '', content: '', startAt: toLocalDateTimeValue(), endAt: '' });
+  const items = content?.announcements || [];
+  const [form, setForm] = useState(empty);
+  const [id, setId] = useState();
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const reset = () => { setId(undefined); setForm(empty()); setError(''); };
+  const edit = (announcement) => {
+    setId(announcement.id);
+    setForm({
+      title: announcement.title,
+      content: announcement.content,
+      startAt: toLocalDateTimeValue(announcement.startAt),
+      endAt: announcement.endAt ? toLocalDateTimeValue(announcement.endAt) : '',
+    });
+    setError('');
+  };
+
+  const save = async (event) => {
+    event.preventDefault(); setBusy(true); setError('');
+    try {
+      const payload = {
+        title: form.title,
+        content: form.content,
+        startAt: new Date(form.startAt).toISOString(),
+        endAt: form.endAt ? new Date(form.endAt).toISOString() : null,
+      };
+      const result = await api(id ? `/api/announcements/${id}` : '/api/announcements', {
+        method: id ? 'PUT' : 'POST',
+        body: JSON.stringify(payload),
+      });
+      const saved = result.announcement;
+      patchContent((current, meta) => {
+        const remaining = (current.announcements || []).filter((item) => item.id !== saved.id);
+        const active = isAnnouncementActiveClient(saved);
+        return {
+          ...current,
+          announcements: (meta.manage || active ? [saved, ...remaining] : remaining)
+            .sort((a, b) => b.startAt.localeCompare(a.startAt)),
+        };
+      });
+      reset();
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  };
+
+  const remove = async (announcement) => {
+    if (!confirm(`Delete announcement "${announcement.title}"?`)) return;
+    try {
+      await api(`/api/announcements/${announcement.id}`, { method: 'DELETE', body: '{}' });
+      patchContent((current) => ({
+        ...current,
+        announcements: (current.announcements || []).filter((item) => item.id !== announcement.id),
+      }));
+      if (id === announcement.id) reset();
+    } catch (err) { setError(err.message); }
+  };
+
+  return <section>
+    <Head title="Announcements" text="Administrators and editors can publish time-bounded portal announcements." />
+    <div className="cols">
+      <form className="card form" onSubmit={save}>
+        <h2>{id ? 'Edit announcement' : 'New announcement'}</h2>
+        <Field label="Title"><input required maxLength="160" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} /></Field>
+        <Field label="Content"><textarea rows="6" required maxLength="4000" value={form.content} onChange={(event) => setForm({ ...form, content: event.target.value })} /></Field>
+        <Field label="Start date"><input type="datetime-local" required value={form.startAt} onChange={(event) => setForm({ ...form, startAt: event.target.value })} /></Field>
+        <Field label="End date (optional)"><input type="datetime-local" value={form.endAt} onChange={(event) => setForm({ ...form, endAt: event.target.value })} /></Field>
+        {error && <ErrorBox text={error} />}
+        <button disabled={busy}>{busy ? 'Saving…' : id ? 'Save announcement' : 'Create announcement'}</button>
+        {id && <button type="button" className="secondary" onClick={reset}>Cancel</button>}
+      </form>
+
+      <div className="card"><h2>Existing announcements</h2><div className="records">
+        {items.map((announcement) => <div className="record" key={announcement.id}>
+          <div>
+            <b>{announcement.title}</b>
+            <small>{new Date(announcement.startAt).toLocaleString()} → {announcement.endAt ? new Date(announcement.endAt).toLocaleString() : 'No end date'} · {announcement.id}</small>
+          </div>
+          <div><button className="secondary" onClick={() => edit(announcement)}>Edit</button><button className="danger" onClick={() => remove(announcement)}>Delete</button></div>
+        </div>)}
+      </div>{!items.length && <p className="hint">No announcements yet.</p>}</div>
+    </div>
+  </section>;
+}
+
+function isAnnouncementActiveClient(announcement) {
+  const now = Date.now();
+  return Date.parse(announcement.startAt) <= now && (!announcement.endAt || now <= Date.parse(announcement.endAt));
 }
 
 function Logbook() {
@@ -808,6 +923,7 @@ function Logbook() {
                     <b>{field.field}</b>
                     <span className="logbook-previous-value">{field.value || '(empty)'}</span>
                     {field.referenceId && <code>{field.referenceId}</code>}
+                    {field.referenceIds?.map((referenceId) => <code key={referenceId}>{referenceId}</code>)}
                   </div>)}
                 </div>
               : entry.previousEntityLabel
@@ -836,7 +952,7 @@ function LogbookSkeleton() {
 }
 
 function Users({ boot, refresh }) {
-  const empty = { email: '', password: '', repeat: '', role: 'reader' };
+  const empty = { fullName: '', email: '', password: '', repeat: '', role: 'reader' };
   const [items, setItems] = useState([]);
   const [form, setForm] = useState(empty);
   const [id, setId] = useState();
@@ -852,7 +968,7 @@ function Users({ boot, refresh }) {
   };
   useEffect(() => { load(); }, []);
 
-  const edit = (user) => { setId(user.id); setForm({ email: user.email, password: '', repeat: '', role: user.role }); setError(''); };
+  const edit = (user) => { setId(user.id); setForm({ fullName: user.fullName || '', email: user.email, password: '', repeat: '', role: user.role }); setError(''); };
   const reset = () => { setId(undefined); setForm(empty); setError(''); };
   const save = async (event) => {
     event.preventDefault();
@@ -862,7 +978,7 @@ function Users({ boot, refresh }) {
     try {
       await api(id ? `/api/admin/users/${id}` : '/api/admin/users', {
         method: id ? 'PUT' : 'POST',
-        body: JSON.stringify({ email: form.email, password: form.password || undefined, role: form.role }),
+        body: JSON.stringify({ fullName: form.fullName, email: form.email, password: form.password || undefined, role: form.role }),
       });
       reset(); await Promise.all([load(), refresh()]);
     } catch (err) { setError(err.message); } finally { setBusy(false); }
@@ -882,6 +998,7 @@ function Users({ boot, refresh }) {
     <div className="cols">
       <form className="card form" onSubmit={save}>
         <h2>{id ? 'Edit user' : 'Create user'}</h2>
+        <Field label="Full Name"><input autoComplete="name" maxLength="120" required value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} /></Field>
         <Field label="Email"><input type="email" autoComplete="username" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
         <Field label={id ? 'New password (optional)' : 'Password'}><input type="password" autoComplete="new-password" minLength={form.password ? 10 : undefined} required={!id} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></Field>
         <Field label="Repeat password"><input type="password" autoComplete="new-password" required={!id || Boolean(form.password)} value={form.repeat} onChange={(e) => setForm({ ...form, repeat: e.target.value })} /></Field>
@@ -895,7 +1012,7 @@ function Users({ boot, refresh }) {
         {loading ? <RecordSkeleton count={4} /> : items.map((user) => {
           const protectedAdmin = user.id === boot.user.id && user.role === 'administrator' && adminCount === 1;
           return <div className="record" key={user.id}>
-            <div><b>{user.email}</b><small>{user.role} · {user.id}</small></div>
+            <div><b>{user.fullName || user.email}</b><small>{user.email} · {user.role} · {user.id}</small></div>
             <div><button className="secondary" onClick={() => edit(user)}>Edit</button><button className="danger" disabled={protectedAdmin} onClick={() => remove(user)}>Delete</button></div>
           </div>;
         })}
@@ -914,7 +1031,7 @@ function Settings({ boot, refresh }) {
     setBusy(true); setError('');
     try {
       await api('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ mode, password }) });
-      clearPortalCache(); setPassword('');
+      setPassword('');
       await refresh();
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
