@@ -112,5 +112,10 @@
 .logbook-entity code{display:block;max-width:100%;overflow-wrap:anywhere;word-break:break-word;font-size:.75rem;color:#747970}
 .logbook-entity span{max-width:100%;overflow-wrap:anywhere;word-break:break-word}
 .logbook-empty{color:#9a9e96}
+.logbook-previous-fields{display:grid;gap:.7rem;width:100%}
+.logbook-previous-field{display:grid;gap:.18rem;min-width:0}
+.logbook-previous-field:not(:last-child){padding-bottom:.7rem;border-bottom:1px solid #ecece7}
+.logbook-previous-field b{font-size:.75rem}
+.logbook-previous-value{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
 .logbook-card>.empty{margin:1rem}
 @media(max-width:900px){.logbook-card{overflow:auto}}
