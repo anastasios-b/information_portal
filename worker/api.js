@@ -325,7 +325,7 @@ async function getContent(request, env, manage) {
       ? articleStore.articles
       : articleStore.articles.filter((article) =>
           article.status === 'published' && articleHasVisibleCategory(article, categoryStore.categories)),
-  ).map(publicArticle);
+  ).map((article) => manage ? publicArticle(article) : portalArticle(article, categoryStore.categories));
 
   const now = Date.now();
   const announcements = sortAnnouncements(
@@ -505,7 +505,7 @@ async function listArticles(request, env, manage) {
   return json({
     articles: sortArticles(articleStore.articles.filter((article) =>
       article.status === 'published' && articleHasVisibleCategory(article, categoryStore.categories),
-    )).map(publicArticle),
+    )).map((article) => portalArticle(article, categoryStore.categories)),
   });
 }
 
@@ -1175,6 +1175,17 @@ function articleHasVisibleCategory(article, categories) {
 function publicArticle(article) {
   const { categoryId, ...rest } = article;
   return { ...rest, categoryIds: articleCategoryIds(article) };
+}
+
+function portalArticle(article, categories) {
+  const visibleCategoryIds = new Set(
+    categories.filter((category) => !category.hidden).map((category) => category.id),
+  );
+  const result = publicArticle(article);
+  return {
+    ...result,
+    categoryIds: result.categoryIds.filter((categoryId) => visibleCategoryIds.has(categoryId)),
+  };
 }
 
 function sameStringArray(left, right) {
