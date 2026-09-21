@@ -7,7 +7,7 @@ import 'prismjs/components/prism-markup-templating';
 import 'prismjs/components/prism-php';
 import 'prismjs/components/prism-sql';
 import 'prismjs/components/prism-python';
-import { api, articleImageUrl, listArticleImages, loadContentOnce, uploadArticleImage } from './api.js';
+import { api, articleImageUrl, listArticleImages, loadContentOnce, resetContentRequests, uploadArticleImage } from './api.js';
 
 const ADMIN_ROUTES = ['/admin/articles', '/admin/categories', '/admin/announcements', '/admin/logbook', '/admin/users', '/admin/settings'];
 
@@ -98,7 +98,9 @@ export default function App() {
     setContentCache((current) => {
       const next = { ...current };
       for (const [key, data] of Object.entries(current)) {
-        next[key] = updater(data, { manage: key.startsWith('manage:'), key }) || data;
+        const updated = updater(data, { manage: key.startsWith('manage:'), key });
+        if (updated === null) delete next[key];
+        else next[key] = updated || data;
       }
       return next;
     });
@@ -914,11 +916,15 @@ function Categories({ content, patchContent }) {
         body: JSON.stringify({ name, hidden }),
       });
       const saved = result.category;
-      patchContent((current) => ({
-        ...current,
-        categories: [saved, ...(current.categories || []).filter((category) => category.id !== saved.id)]
-          .sort((a, b) => a.name.localeCompare(b.name)),
-      }));
+      resetContentRequests();
+      patchContent((current, meta) => {
+        if (!meta.manage) return null;
+        return {
+          ...current,
+          categories: [saved, ...(current.categories || []).filter((category) => category.id !== saved.id)]
+            .sort((a, b) => a.name.localeCompare(b.name)),
+        };
+      });
       reset();
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
@@ -932,10 +938,14 @@ function Categories({ content, patchContent }) {
     if (!confirm(`Delete category "${category.name}"?`)) return;
     try {
       await api(`/api/categories/${category.id}`, { method: 'DELETE', body: '{}' });
-      patchContent((current) => ({
-        ...current,
-        categories: (current.categories || []).filter((item) => item.id !== category.id),
-      }));
+      resetContentRequests();
+      patchContent((current, meta) => {
+        if (!meta.manage) return null;
+        return {
+          ...current,
+          categories: (current.categories || []).filter((item) => item.id !== category.id),
+        };
+      });
       if (id === category.id) reset();
     } catch (err) { setError(err.message); }
   };
