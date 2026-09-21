@@ -828,7 +828,12 @@ function Articles({ path, content, patchContent }) {
       {id ? <div className="card article-live-preview">
         <div className="live-preview-head">
           <div><small>Live rendering</small><h2>Article preview</h2></div>
-          <span className="pill">{form.status}</span>
+          <div className="live-preview-actions">
+            <span className="pill">{form.status}</span>
+            <a className="secondary button-link live-preview-link" href={`/articles/${id}`} target="_blank" rel="noopener noreferrer">
+              View article <NewTabIcon />
+            </a>
+          </div>
         </div>
         <article className="article-document preview-document">
           <div className="article-meta">
