@@ -920,7 +920,15 @@ function createStore(name) {
   if (name === 'users') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, users: [], createdAt: now, updatedAt: now };
   if (name === 'articles') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, articles: [], createdAt: now, updatedAt: now };
   if (name === 'categories') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, categories: [], createdAt: now, updatedAt: now };
-  if (name === 'settings') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, mode: 'private', portalName: DEFAULT_PORTAL_NAME, updatedAt: now, updatedById: null };
+  if (name === 'settings') return {
+    id: crypto.randomUUID(),
+    schemaVersion: STORE_SCHEMA_VERSION,
+    mode: 'private',
+    portalName: DEFAULT_PORTAL_NAME,
+    initialArticles: DEFAULT_INITIAL_ARTICLES,
+    updatedAt: now,
+    updatedById: null,
+  };
   if (name === 'logbook') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, entries: [], createdAt: now, updatedAt: now };
   if (name === 'announcements') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, announcements: [], createdAt: now, updatedAt: now };
   if (name === 'comments') return { id: crypto.randomUUID(), schemaVersion: STORE_SCHEMA_VERSION, comments: [], createdAt: now, updatedAt: now };
@@ -969,6 +977,7 @@ function storeFromLegacy(name, legacy) {
       schemaVersion: 1,
       mode: ['private', 'public'].includes(legacy.settings?.mode) ? legacy.settings.mode : 'private',
       portalName: validPortalNameOrDefault(legacy.settings?.portalName),
+      initialArticles: validInitialArticlesOrDefault(legacy.settings?.initialArticles),
       updatedAt: legacy.settings?.updatedAt || legacy.updatedAt || now,
       updatedById: legacy.settings?.updatedById ?? null,
     };
@@ -1017,6 +1026,85 @@ async function readStore(env, name) {
   }
 }
 
+async function readInitialArticlesStore(env) {
+  try {
+    const object = await env.PORTAL_DATA.get(STORE_KEYS.initialArticles);
+    if (object) {
+      const data = await object.json();
+      validateStore('initialArticles', data);
+      return { data, etag: object.etag };
+    }
+    const data = await refreshInitialArticles(env);
+    return { data, etag: null };
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    console.error('R2 initial articles store read failed', error?.stack || error);
+    throw new ApiError(500, 'Portal initial articles data could not be read', 'STORAGE_READ_FAILED');
+  }
+}
+
+async function refreshInitialArticles(env) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const [{ data: articleStore }, { data: categoryStore }, { data: settings }] = await Promise.all([
+      readStore(env, 'articles'),
+      readStore(env, 'categories'),
+      readStore(env, 'settings'),
+    ]);
+
+    let currentObject;
+    try {
+      currentObject = await env.PORTAL_DATA.get(STORE_KEYS.initialArticles);
+    } catch (error) {
+      console.error('R2 initial articles store read failed', error?.stack || error);
+      throw new ApiError(500, 'Portal initial articles data could not be read', 'STORAGE_READ_FAILED');
+    }
+
+    let current = null;
+    if (currentObject) {
+      current = await currentObject.json();
+      validateStore('initialArticles', current);
+    }
+
+    const now = new Date().toISOString();
+    const articles = sortArticlesByCreatedAt(
+      articleStore.articles.filter((article) =>
+        article.status === 'published' && articleHasVisibleCategory(article, categoryStore.categories)),
+    ).slice(0, initialArticlesCount(settings));
+
+    const next = {
+      id: current?.id || crypto.randomUUID(),
+      schemaVersion: STORE_SCHEMA_VERSION,
+      articles: structuredClone(articles),
+      createdAt: current?.createdAt || now,
+      updatedAt: now,
+    };
+
+    try {
+      const condition = currentObject
+        ? { etagMatches: currentObject.etag }
+        : new Headers({ 'If-None-Match': '*' });
+      const written = await env.PORTAL_DATA.put(STORE_KEYS.initialArticles, JSON.stringify(next), {
+        onlyIf: condition,
+        httpMetadata: { contentType: 'application/json; charset=utf-8' },
+      });
+      if (written) return next;
+    } catch (error) {
+      console.error('R2 initial articles store write failed', error?.stack || error);
+      throw new ApiError(500, 'Portal initial articles data could not be saved', 'STORAGE_WRITE_FAILED');
+    }
+  }
+
+  throw new ApiError(409, 'Initial article index changed concurrently. Retry the operation.', 'WRITE_CONFLICT');
+}
+
+async function refreshInitialArticlesSafely(env) {
+  try {
+    await refreshInitialArticles(env);
+  } catch (error) {
+    console.error('Initial article index refresh failed', error?.stack || error);
+  }
+}
+
 async function mutateStore(env, name, mutator) {
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const { data, etag } = await readStore(env, name);
@@ -1062,6 +1150,17 @@ function validateStore(name, data) {
         throw new ApiError(500, 'Portal articles data is invalid', 'INVALID_DATABASE');
       }
     }
+  } else if (name === 'initialArticles') {
+    if (!Array.isArray(data.articles)) throw new ApiError(500, 'Portal initial articles data is invalid', 'INVALID_DATABASE');
+    for (const article of data.articles) {
+      const legacyCategoryValid = article.categoryId == null || isUuid(article.categoryId);
+      const categoriesValid = article.categoryIds === undefined ||
+        (Array.isArray(article.categoryIds) && article.categoryIds.length > 0 && article.categoryIds.every(isUuid));
+      if (!isUuid(article.id) || !isUuid(article.authorId) || !isUuid(article.updatedById) ||
+          !ARTICLE_STATUSES.has(article.status) || !legacyCategoryValid || !categoriesValid) {
+        throw new ApiError(500, 'Portal initial articles data is invalid', 'INVALID_DATABASE');
+      }
+    }
   } else if (name === 'categories') {
     if (!Array.isArray(data.categories)) throw new ApiError(500, 'Portal categories data is invalid', 'INVALID_DATABASE');
     for (const category of data.categories) {
@@ -1073,6 +1172,9 @@ function validateStore(name, data) {
   } else if (name === 'settings') {
     if (!['private', 'public'].includes(data.mode)) throw new ApiError(500, 'Portal settings data is invalid', 'INVALID_DATABASE');
     if (data.portalName !== undefined && (typeof data.portalName !== 'string' || !data.portalName.trim() || data.portalName.trim().length > 120)) {
+      throw new ApiError(500, 'Portal settings data is invalid', 'INVALID_DATABASE');
+    }
+    if (data.initialArticles !== undefined && (!Number.isInteger(data.initialArticles) || data.initialArticles < 1 || data.initialArticles > 1000)) {
       throw new ApiError(500, 'Portal settings data is invalid', 'INVALID_DATABASE');
     }
     if (data.updatedById !== null && data.updatedById !== undefined && !isUuid(data.updatedById)) {
@@ -1153,6 +1255,7 @@ function scheduleLogEntry(ctx, env, {
 }
 
 function sortArticles(articles) { return [...articles].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
+function sortArticlesByCreatedAt(articles) { return [...articles].sort((a, b) => b.createdAt.localeCompare(a.createdAt)); }
 function sortCategories(categories) { return [...categories].sort((a, b) => a.name.localeCompare(b.name)); }
 function sortAnnouncements(announcements) { return [...announcements].sort((a, b) => b.startAt.localeCompare(a.startAt)); }
 function sortComments(comments) { return [...comments].sort((a, b) => a.createdAt.localeCompare(b.createdAt)); }
@@ -1336,6 +1439,23 @@ function validPortalNameOrDefault(value) {
 
 function portalName(settings) {
   return validPortalNameOrDefault(settings?.portalName);
+}
+
+function validateInitialArticles(value) {
+  const count = Number(value);
+  if (!Number.isInteger(count) || count < 1 || count > 1000) {
+    throw new ApiError(400, 'Initial Articles must be an integer between 1 and 1000', 'INVALID_INITIAL_ARTICLES');
+  }
+  return count;
+}
+
+function validInitialArticlesOrDefault(value) {
+  const count = Number(value);
+  return Number.isInteger(count) && count >= 1 && count <= 1000 ? count : DEFAULT_INITIAL_ARTICLES;
+}
+
+function initialArticlesCount(settings) {
+  return validInitialArticlesOrDefault(settings?.initialArticles);
 }
 
 function validateCommentContent(value) {
