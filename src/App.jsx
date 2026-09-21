@@ -56,6 +56,7 @@ export default function App() {
   const [contentCache, setContentCache] = useState({});
   const [contentErrors, setContentErrors] = useState({});
   const [portalQuery, setPortalQuery] = useState('');
+  const [portalCategory, setPortalCategory] = useState('');
 
   const refresh = async () => {
     try {
@@ -170,6 +171,8 @@ export default function App() {
       patchContent={patchContent}
       searchQuery={portalQuery}
       setSearchQuery={setPortalQuery}
+      categoryFilter={portalCategory}
+      setCategoryFilter={setPortalCategory}
     />;
   }
   return <Home
@@ -178,6 +181,8 @@ export default function App() {
     content={content}
     searchQuery={portalQuery}
     setSearchQuery={setPortalQuery}
+    categoryFilter={portalCategory}
+    setCategoryFilter={setPortalCategory}
   />;
 }
 
@@ -270,11 +275,10 @@ function filterPortalArticles(articles, categories, query, categoryFilter = '') 
   });
 }
 
-function Home({ boot, refresh, content, searchQuery, setSearchQuery }) {
+function Home({ boot, refresh, content, searchQuery, setSearchQuery, categoryFilter, setCategoryFilter }) {
   const articles = content?.articles || [];
   const categories = content?.categories || [];
   const announcements = content?.announcements || [];
-  const [categoryFilter, setCategoryFilter] = useState('');
 
   const categoryMap = useMemo(() => new Map(categories.map((category) => [category.id, category.name])), [categories]);
   const filteredArticles = useMemo(
@@ -295,6 +299,8 @@ function Home({ boot, refresh, content, searchQuery, setSearchQuery }) {
       content={content}
       searchQuery={searchQuery}
       setSearchQuery={setSearchQuery}
+      categoryFilter={categoryFilter}
+      setCategoryFilter={setCategoryFilter}
     />
     <main className="main portal-layout">
       <div className="portal-primary">
@@ -302,9 +308,6 @@ function Home({ boot, refresh, content, searchQuery, setSearchQuery }) {
           {boot.heroEyebrow && <small>{boot.heroEyebrow}</small>}
           <h1>{boot.heroTitle || 'Information that stays easy to find.'}</h1>
           <p>{boot.heroDescription || 'Published procedures, references, notes and updates in one lean portal.'}</p>
-        </section>
-        <section className="portal-tools" aria-label="Filter articles">
-          <label className="category-filter"><span>Category</span><select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option value="">All categories</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
         </section>
         <p className="results-count">{filteredArticles.length} {filteredArticles.length === 1 ? 'article' : 'articles'}</p>
         <section className="grid">
@@ -327,7 +330,7 @@ function Home({ boot, refresh, content, searchQuery, setSearchQuery }) {
   </>;
 }
 
-function ArticlePage({ path, boot, refresh, content, patchContent, searchQuery, setSearchQuery }) {
+function ArticlePage({ path, boot, refresh, content, patchContent, searchQuery, setSearchQuery, categoryFilter, setCategoryFilter }) {
   const articleId = path.split('/').filter(Boolean)[1] || '';
   const article = (content?.articles || []).find((item) => item.id === articleId);
   const categories = content?.categories || [];
@@ -434,6 +437,8 @@ function ArticlePage({ path, boot, refresh, content, patchContent, searchQuery, 
       content={content}
       searchQuery={searchQuery}
       setSearchQuery={setSearchQuery}
+      categoryFilter={categoryFilter}
+      setCategoryFilter={setCategoryFilter}
     />
     <main className="article-page portal-layout">
       <div className="portal-primary">
@@ -494,7 +499,7 @@ function ArticlePage({ path, boot, refresh, content, patchContent, searchQuery, 
   </>;
 }
 
-function PortalHeader({ boot, logout, content, searchQuery, setSearchQuery }) {
+function PortalHeader({ boot, logout, content, searchQuery, setSearchQuery, categoryFilter, setCategoryFilter }) {
   return <header className="top">
     <button className="brand-link" onClick={() => navigate('/')}>{boot.portalName || 'Information Portal'}</button>
     <PortalSearch
@@ -502,6 +507,8 @@ function PortalHeader({ boot, logout, content, searchQuery, setSearchQuery }) {
       categories={content?.categories || []}
       query={searchQuery}
       setQuery={setSearchQuery}
+      categoryFilter={categoryFilter}
+      setCategoryFilter={setCategoryFilter}
     />
     <div className="top-actions">
       <span className="pill">{boot.mode}</span>
@@ -514,14 +521,20 @@ function PortalHeader({ boot, logout, content, searchQuery, setSearchQuery }) {
   </header>;
 }
 
-function PortalSearch({ articles, categories, query, setQuery }) {
+function PortalSearch({ articles, categories, query, setQuery, categoryFilter, setCategoryFilter }) {
   const [open, setOpen] = useState(false);
   const results = useMemo(
-    () => filterPortalArticles(articles, categories, query),
-    [articles, categories, query],
+    () => filterPortalArticles(articles, categories, query, categoryFilter),
+    [articles, categories, query, categoryFilter],
   );
-  const hasQuery = Boolean(query.trim());
-  const visibleResults = hasQuery ? results.slice(0, 5) : [];
+  const hasCriteria = Boolean(query.trim() || categoryFilter);
+  const visibleResults = hasCriteria ? results.slice(0, 5) : [];
+
+  useEffect(() => {
+    if (categoryFilter && !categories.some((category) => category.id === categoryFilter)) {
+      setCategoryFilter('');
+    }
+  }, [categories, categoryFilter, setCategoryFilter]);
 
   const openArticle = (articleId) => {
     setOpen(false);
@@ -534,18 +547,32 @@ function PortalSearch({ articles, categories, query, setQuery }) {
   };
 
   return <div className="portal-search" onBlur={() => setTimeout(() => setOpen(false), 0)}>
-    <input
-      type="search"
-      aria-label="Search articles"
-      placeholder="Search articles…"
-      value={query}
-      onFocus={() => setOpen(true)}
-      onChange={(event) => {
-        setQuery(event.target.value);
-        setOpen(true);
-      }}
-    />
-    {open && hasQuery && <div className="portal-search-results" role="listbox" aria-label="Article search results">
+    <div className="portal-search-controls">
+      <input
+        type="search"
+        aria-label="Search articles"
+        placeholder="Search articles…"
+        value={query}
+        onFocus={() => setOpen(true)}
+        onChange={(event) => {
+          setQuery(event.target.value);
+          setOpen(true);
+        }}
+      />
+      <select
+        aria-label="Filter articles by category"
+        value={categoryFilter}
+        onFocus={() => setOpen(true)}
+        onChange={(event) => {
+          setCategoryFilter(event.target.value);
+          setOpen(true);
+        }}
+      >
+        <option value="">All categories</option>
+        {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+      </select>
+    </div>
+    {open && hasCriteria && <div className="portal-search-results" role="listbox" aria-label="Article search results">
       {visibleResults.map((article) => <button
         type="button"
         className="portal-search-result"
