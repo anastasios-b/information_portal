@@ -209,61 +209,6 @@ function Home({ boot, refresh, content }) {
     navigate('/');
   };
 
-  const editComment = (comment) => {
-    setEditingCommentId(comment.id);
-    setEditingCommentText(comment.content);
-    setCommentError('');
-  };
-
-  const cancelCommentEdit = () => {
-    setEditingCommentId(null);
-    setEditingCommentText('');
-  };
-
-  const saveCommentEdit = async (comment) => {
-    if (!editingCommentText.trim() || commentActionId) return;
-    setCommentActionId(comment.id);
-    setCommentError('');
-    try {
-      const result = await api(`/api/articles/${articleId}/comments/${comment.id}`, {
-        method: 'PUT',
-        body: JSON.stringify({ content: editingCommentText }),
-      });
-      patchContent((current, meta) => {
-        if (meta.manage || current.mode !== 'private') return current;
-        return {
-          ...current,
-          comments: (current.comments || []).map((item) => item.id === comment.id ? result.comment : item),
-        };
-      });
-      cancelCommentEdit();
-    } catch (err) {
-      setCommentError(err.message);
-    } finally {
-      setCommentActionId(null);
-    }
-  };
-
-  const removeComment = async (comment) => {
-    if (!confirm('Delete this comment?')) return;
-    setCommentActionId(comment.id);
-    setCommentError('');
-    try {
-      await api(`/api/articles/${articleId}/comments/${comment.id}`, { method: 'DELETE', body: '{}' });
-      patchContent((current, meta) => {
-        if (meta.manage || current.mode !== 'private') return current;
-        return {
-          ...current,
-          comments: (current.comments || []).filter((item) => item.id !== comment.id),
-        };
-      });
-      if (editingCommentId === comment.id) cancelCommentEdit();
-    } catch (err) {
-      setCommentError(err.message);
-    } finally {
-      setCommentActionId(null);
-    }
-  };
 
   return <>
     <PortalHeader boot={boot} refresh={refresh} logout={logout} />
@@ -337,6 +282,63 @@ function ArticlePage({ path, boot, refresh, content, patchContent }) {
       setCommentBusy(false);
     }
   };
+
+  const editComment = (comment) => {
+    setEditingCommentId(comment.id);
+    setEditingCommentText(comment.content);
+    setCommentError('');
+  };
+
+  const cancelCommentEdit = () => {
+    setEditingCommentId(null);
+    setEditingCommentText('');
+  };
+
+  const saveCommentEdit = async (comment) => {
+    if (!editingCommentText.trim() || commentActionId) return;
+    setCommentActionId(comment.id);
+    setCommentError('');
+    try {
+      const result = await api(`/api/articles/${articleId}/comments/${comment.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ content: editingCommentText }),
+      });
+      patchContent((current, meta) => {
+        if (meta.manage || current.mode !== 'private') return current;
+        return {
+          ...current,
+          comments: (current.comments || []).map((item) => item.id === comment.id ? result.comment : item),
+        };
+      });
+      cancelCommentEdit();
+    } catch (err) {
+      setCommentError(err.message);
+    } finally {
+      setCommentActionId(null);
+    }
+  };
+
+  const removeComment = async (comment) => {
+    if (!confirm('Delete this comment?')) return;
+    setCommentActionId(comment.id);
+    setCommentError('');
+    try {
+      await api(`/api/articles/${articleId}/comments/${comment.id}`, { method: 'DELETE', body: '{}' });
+      patchContent((current, meta) => {
+        if (meta.manage || current.mode !== 'private') return current;
+        return {
+          ...current,
+          comments: (current.comments || []).filter((item) => item.id !== comment.id),
+        };
+      });
+      if (editingCommentId === comment.id) cancelCommentEdit();
+    } catch (err) {
+      setCommentError(err.message);
+    } finally {
+      setCommentActionId(null);
+    }
+  };
+
 
   return <>
     <PortalHeader boot={boot} refresh={refresh} logout={logout} />
