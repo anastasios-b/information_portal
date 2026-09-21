@@ -32,15 +32,21 @@ test('UI preserves required routes, content controls and single-load behavior', 
   assert.match(app, /category-hidden-badge/);
   assert.match(app, /accept="\.txt,\.md,text\/plain,text\/markdown"/);
 
+  assert.match(app, /function PortalSearch/);
   assert.match(app, /type="search"/);
   assert.match(app, /Search articles…/);
+  assert.match(app, /visibleResults = hasQuery \? results\.slice\(0, 5\)/);
+  assert.match(app, /View all results/);
+  assert.match(app, /filterPortalArticles/);
   assert.match(app, /All categories/);
   assert.match(app, /filteredArticles/);
   assert.match(app, /No matching articles/);
 
-  assert.match(app, /loadContentOnce\(contentKey, \{ manage \}\)/);
+  assert.match(app, /loadContentOnce\(contentKey, \{ initial: true \}\)/);
+  assert.match(app, /loadContentOnce\(contentKey\)/);
   assert.match(clientApi, /const contentRequests = new Map\(\)/);
   assert.match(clientApi, /\/api\/content/);
+  assert.match(clientApi, /initial/);
   assert.match(clientApi, /contentRequests\.has\(key\)/);
   assert.doesNotMatch(app, /cachedPortalApi/);
   assert.doesNotMatch(clientApi, /sessionStorage/);
@@ -59,7 +65,7 @@ test('UI preserves required routes, content controls and single-load behavior', 
 
   assert.match(app, /function PortalSidebar/);
   assert.match(app, /Announcements/);
-  assert.match(app, /Recent Articles/);
+  assert.doesNotMatch(app, /Recent Articles/);
   assert.match(app, />Show all</);
   assert.match(app, /className="announcement-drawer"/);
   assert.match(app, /function Announcements/);
@@ -84,6 +90,13 @@ test('UI preserves required routes, content controls and single-load behavior', 
   assert.match(app, /removeComment/);
   assert.match(app, /Portal Name/);
   assert.match(app, /boot\.portalName/);
+  assert.match(app, /Homepage content/);
+  assert.match(app, /Hero Label/);
+  assert.match(app, /Hero Title/);
+  assert.match(app, /Hero Description/);
+  assert.match(app, /Initial Articles/);
+  assert.match(app, /boot\.heroTitle/);
+  assert.match(app, /boot\.heroDescription/);
 
   assert.match(app, /function AppSkeleton/);
   assert.match(app, /function PortalSkeleton/);
@@ -137,6 +150,8 @@ test('UI preserves required routes, content controls and single-load behavior', 
   assert.match(clientApi, /X-Article-Image-Filename/);
 
   assert.match(styles, /--accent:#e74e24/);
+  assert.match(styles, /\.portal-search\{/);
+  assert.match(styles, /\.portal-search-results\{/);
   assert.match(styles, /\.portal-layout\{/);
   assert.match(styles, /\.announcement-drawer\{/);
   assert.match(styles, /\.comments-section\{/);
