@@ -35,6 +35,7 @@ test('UI preserves required routes, search and controls', () => {
   assert.match(app, /target="_blank"/);
   assert.match(app, /rel="noopener noreferrer"/);
   assert.match(app, /isAdmin && <NavButton path="\/admin\/logbook"/);
+  assert.match(app, /Previous Value/);
 
   assert.match(app, /function AppSkeleton/);
   assert.match(app, /function PortalSkeleton/);
