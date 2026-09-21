@@ -656,7 +656,7 @@ function Categories() {
         <button disabled={busy}>{busy ? 'Saving…' : id ? 'Save category' : 'Create category'}</button>
         {id && <button type="button" className="secondary" onClick={reset}>Cancel</button>}
       </form>
-      <div className="card"><h2>Article categories</h2><div className="records" aria-busy={loading}>
+      <div className="card"><h2>Existing categories</h2><div className="records" aria-busy={loading}>
         {loading ? <RecordSkeleton count={4} /> : items.map((category) => <div className="record" key={category.id}>
           <div><b>{category.name}</b><small>{category.id}</small></div>
           <div><button className="secondary" onClick={() => edit(category)}>Edit</button><button className="danger" onClick={() => remove(category)}>Delete</button></div>
