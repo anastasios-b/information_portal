@@ -123,7 +123,7 @@ export default function App() {
     }
 
     return () => { active = false; };
-  }, [contentKey, contentCache, contentErrors, manage, needsContent]);
+  }, [contentKey, manage, needsContent]);
 
   const patchContent = (updater) => {
     setContentCache((current) => {
@@ -1483,6 +1483,7 @@ function Settings({ boot, refresh, patchContent }) {
 
   return <section>
     <Head title="Settings" text="Configure the portal identity, homepage, loading and visibility." />
+    {error && <ErrorBox text={error} />}
     <div className="settings-stack">
       <form className="card settings" onSubmit={savePortalName}>
         <h2>Portal name</h2>
@@ -1515,7 +1516,6 @@ function Settings({ boot, refresh, patchContent }) {
           <button disabled={busy || boot.mode === 'private' || !password} className={boot.mode === 'private' ? 'chosen' : ''} onClick={() => change('private')}>Private<br /><small>Login required</small></button>
           <button disabled={busy || boot.mode === 'public' || !password} className={boot.mode === 'public' ? 'chosen' : ''} onClick={() => change('public')}>Public<br /><small>Published articles visible</small></button>
         </div>
-        {error && <ErrorBox text={error} />}
       </div>
     </div>
   </section>;
