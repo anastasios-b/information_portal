@@ -152,7 +152,7 @@ test('bootstrap reads only users and settings after split stores exist', async (
   assert.deepEqual(new Set(e.PORTAL_DATA.reads), new Set([KEYS.users, KEYS.settings]));
 });
 
-test('legacy monolith migrates lazily into four split files without data loss', async () => {
+test('legacy monolith migrates lazily into split files without data loss', async () => {
   const e = env();
   const userId = crypto.randomUUID();
   const categoryId = crypto.randomUUID();
