@@ -74,15 +74,25 @@ class MockR2 {
 }
 
 function env(overrides = {}) { return { PORTAL_DATA: new MockR2(), SESSION_SECRET: SECRET, ...overrides }; }
-async function call(environment, path, { method = 'GET', body, cookie } = {}) {
+function createTestContext() {
+  const pending = [];
+  return {
+    pending,
+    waitUntil(promise) { pending.push(Promise.resolve(promise)); },
+  };
+}
+
+async function call(environment, path, { method = 'GET', body, cookie, drainWaitUntil = true } = {}) {
   const headers = new Headers();
   if (body !== undefined) headers.set('Content-Type', 'application/json');
   if (method !== 'GET') headers.set('Origin', ORIGIN);
   if (cookie) headers.set('Cookie', cookie);
+  const ctx = createTestContext();
   const response = await handleApiRequest(new Request(`${ORIGIN}${path}`, {
     method, headers, body: body === undefined ? undefined : JSON.stringify(body),
-  }), environment);
-  return { response, payload: response.status === 204 ? null : await response.json() };
+  }), environment, ctx);
+  if (drainWaitUntil) await Promise.all(ctx.pending);
+  return { response, payload: response.status === 204 ? null : await response.json(), ctx };
 }
 async function rawCall(environment, path, { method = 'GET', body, cookie, contentType, filename } = {}) {
   const headers = new Headers();
@@ -90,11 +100,14 @@ async function rawCall(environment, path, { method = 'GET', body, cookie, conten
   if (filename) headers.set('X-Article-Image-Filename', encodeURIComponent(filename));
   if (method !== 'GET') headers.set('Origin', ORIGIN);
   if (cookie) headers.set('Cookie', cookie);
-  const response = await handleApiRequest(new Request(`${ORIGIN}${path}`, { method, headers, body }), environment);
+  const ctx = createTestContext();
+  const response = await handleApiRequest(new Request(`${ORIGIN}${path}`, { method, headers, body }), environment, ctx);
+  await Promise.all(ctx.pending);
   const type = response.headers.get('content-type') || '';
   return {
     response,
     payload: type.includes('application/json') ? await response.json() : await response.arrayBuffer(),
+    ctx,
   };
 }
 
@@ -205,6 +218,8 @@ test('mode changes require administrator password and write settings plus audit 
   const logbook = e.PORTAL_DATA.data(KEYS.logbook);
   assert.equal(logbook.entries.at(-1).action, 'Portal State Update to Public');
   assert.equal(logbook.entries.at(-1).entityLabel, 'Portal');
+  assert.equal(logbook.entries.at(-1).previousEntityId, null);
+  assert.equal(logbook.entries.at(-1).previousEntityLabel, 'Private');
   assert.equal(logbook.entries.at(-1).userEmail, 'admin@example.com');
 });
 
@@ -404,4 +419,42 @@ test('logbook is visible only to administrators', async () => {
 
   result = await call(e, '/api/admin/logbook', { cookie: editorCookie });
   assert.equal(result.response.status, 403);
+});
+
+
+test('logbook update entries preserve previous entity labels and UUIDs', async () => {
+  const e = env();
+  const admin = await setupAdmin(e);
+  const category = await createCategory(e, admin.cookie, 'Original category');
+
+  let result = await call(e, `/api/categories/${category.id}`, {
+    method: 'PUT',
+    cookie: admin.cookie,
+    body: { name: 'Renamed category' },
+  });
+  assert.equal(result.response.status, 200);
+
+  result = await call(e, '/api/admin/logbook', { cookie: admin.cookie });
+  const entry = result.payload.entries.find((item) => item.action === 'Category Update');
+  assert.equal(entry.entityId, category.id);
+  assert.equal(entry.entityLabel, 'Renamed category');
+  assert.equal(entry.previousEntityId, category.id);
+  assert.equal(entry.previousEntityLabel, 'Original category');
+});
+
+test('audit writes are scheduled with waitUntil without blocking the response path', async () => {
+  const e = env();
+  const admin = await setupAdmin(e);
+
+  const result = await call(e, '/api/admin/settings', {
+    method: 'PATCH',
+    cookie: admin.cookie,
+    drainWaitUntil: false,
+    body: { mode: 'public', password: ADMIN_PASSWORD },
+  });
+
+  assert.equal(result.response.status, 200);
+  assert.equal(result.ctx.pending.length, 1);
+  await Promise.all(result.ctx.pending);
+  assert.equal(e.PORTAL_DATA.data(KEYS.logbook).entries.at(-1).action, 'Portal State Update to Public');
 });
