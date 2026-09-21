@@ -923,4 +923,39 @@ test('hidden categories hide exclusive articles while multi-category visible art
 
   result = await call(e, `/api/articles/${hiddenOnlyId}`, { cookie: admin.cookie });
   assert.equal(result.response.status, 200);
+
+  await call(e, '/api/admin/settings', {
+    method: 'PATCH',
+    cookie: admin.cookie,
+    body: { mode: 'private', password: ADMIN_PASSWORD },
+  });
+
+  result = await call(e, '/api/admin/users', {
+    method: 'POST',
+    cookie: admin.cookie,
+    body: {
+      fullName: 'Hidden Category Reader',
+      email: 'hidden-category-reader@example.com',
+      password: 'hidden-category-reader-password',
+      role: 'reader',
+      canComment: true,
+    },
+  });
+  assert.equal(result.response.status, 201);
+
+  result = await call(e, '/api/login', {
+    method: 'POST',
+    body: {
+      email: 'hidden-category-reader@example.com',
+      password: 'hidden-category-reader-password',
+    },
+  });
+  const readerCookie = cookieFrom(result.response);
+
+  result = await call(e, `/api/articles/${hiddenOnlyId}/comments`, {
+    method: 'POST',
+    cookie: readerCookie,
+    body: { content: 'Should not be allowed' },
+  });
+  assert.equal(result.response.status, 403);
 });
