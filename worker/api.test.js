@@ -902,6 +902,10 @@ test('hidden categories hide exclusive articles while multi-category visible art
   assert.deepEqual(result.payload.categories.map((category) => category.id), [visibleCategory.id]);
   assert.equal(result.payload.articles.some((article) => article.id === hiddenOnlyId), false);
   assert.equal(result.payload.articles.some((article) => article.id === mixedId), true);
+  assert.deepEqual(
+    result.payload.articles.find((article) => article.id === mixedId).categoryIds,
+    [visibleCategory.id],
+  );
 
   result = await call(e, '/api/articles');
   assert.equal(result.payload.articles.some((article) => article.id === hiddenOnlyId), false);
