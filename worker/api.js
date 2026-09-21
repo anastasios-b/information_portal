@@ -137,8 +137,8 @@ async function bootstrap(request, env) {
 
 async function setup(request, env) {
   const input = await jsonBody(request);
-  const fullName = validateFullName(input.fullName);
   const email = normalizeEmail(input.email);
+  const fullName = input.fullName == null ? email : validateFullName(input.fullName);
   const password = validatePassword(input.password);
   if (env.BOOTSTRAP_TOKEN && input.bootstrapToken !== env.BOOTSTRAP_TOKEN) {
     throw new ApiError(403, 'Invalid setup token', 'INVALID_SETUP_TOKEN');
@@ -638,8 +638,8 @@ async function saveUser(request, env, ctx, id = null) {
   if (id) assertUuid(id);
   const { session, user: actingUser } = await authenticate(request, env, ['administrator']);
   const input = await jsonBody(request);
-  const fullName = validateFullName(input.fullName);
   const email = normalizeEmail(input.email);
+  const requestedFullName = input.fullName == null ? null : validateFullName(input.fullName);
   const role = validateRole(input.role);
   const password = input.password ? validatePassword(input.password) : null;
   if (!id && !password) throw new ApiError(400, 'Password is required', 'PASSWORD_REQUIRED');
@@ -660,7 +660,7 @@ async function saveUser(request, env, ctx, id = null) {
       if (existing.role === 'administrator' && role !== 'administrator' && adminCount(store.users) <= 1) {
         throw new ApiError(409, 'The system must always have at least one administrator', 'LAST_ADMIN_REQUIRED');
       }
-      existing.fullName = fullName;
+      existing.fullName = requestedFullName ?? String(existing.fullName || '').trim() || existing.email;
       existing.email = email;
       existing.role = role;
       existing.updatedAt = now;
@@ -673,7 +673,7 @@ async function saveUser(request, env, ctx, id = null) {
 
     const created = {
       id: crypto.randomUUID(),
-      fullName,
+      fullName: requestedFullName ?? email,
       email,
       role,
       password: await hashPassword(password),
