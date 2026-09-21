@@ -419,7 +419,7 @@ async function saveAnnouncement(request, env, id = null) {
 }
 
 async function reorderAnnouncements(request, env) {
-  await authenticate(request, env, ['administrator', 'editor']);
+  const { user } = await authenticate(request, env, ['administrator', 'editor']);
   const input = await jsonBody(request);
   const ids = Array.isArray(input.ids) ? input.ids.map((value) => String(value || '')) : [];
 
@@ -439,6 +439,7 @@ async function reorderAnnouncements(request, env) {
     for (const announcement of store.announcements) {
       announcement.sortOrder = order.get(announcement.id);
       announcement.updatedAt = now;
+      announcement.updatedById = user.id;
     }
     return sortAnnouncements(store.announcements);
   });
