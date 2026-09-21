@@ -18,6 +18,9 @@ const PBKDF2_ITERATIONS = 60000;
 const STORE_SCHEMA_VERSION = 1;
 const DEFAULT_PORTAL_NAME = 'Information Portal';
 const DEFAULT_INITIAL_ARTICLES = 12;
+const DEFAULT_HERO_EYEBROW = 'Team knowledge';
+const DEFAULT_HERO_TITLE = 'Information that stays easy to find.';
+const DEFAULT_HERO_DESCRIPTION = 'Published procedures, references, notes and updates in one lean portal.';
 const ROLES = new Set(['administrator', 'editor', 'reader']);
 const ARTICLE_STATUSES = new Set(['draft', 'published']);
 const encoder = new TextEncoder();
@@ -142,6 +145,9 @@ async function bootstrap(request, env) {
     mode: settings.mode,
     portalName: portalName(settings),
     initialArticles: initialArticlesCount(settings),
+    heroEyebrow: heroEyebrow(settings),
+    heroTitle: heroTitle(settings),
+    heroDescription: heroDescription(settings),
     user: user ? publicUser(user) : null,
     adminCount: adminCount(usersStore.users),
   });
@@ -355,6 +361,9 @@ async function getContent(request, env, manage, initial = false) {
     mode: settings.mode,
     portalName: portalName(settings),
     initialArticles: initialArticlesCount(settings),
+    heroEyebrow: heroEyebrow(settings),
+    heroTitle: heroTitle(settings),
+    heroDescription: heroDescription(settings),
     articlesComplete: manage || !initial,
     user: user ? publicUser(user) : null,
     articles,
@@ -852,7 +861,11 @@ async function updateSettings(request, env, ctx) {
   const hasMode = input.mode !== undefined;
   const hasPortalName = input.portalName !== undefined;
   const hasInitialArticles = input.initialArticles !== undefined;
-  if (!hasMode && !hasPortalName && !hasInitialArticles) {
+  const hasHeroEyebrow = input.heroEyebrow !== undefined;
+  const hasHeroTitle = input.heroTitle !== undefined;
+  const hasHeroDescription = input.heroDescription !== undefined;
+
+  if (!hasMode && !hasPortalName && !hasInitialArticles && !hasHeroEyebrow && !hasHeroTitle && !hasHeroDescription) {
     throw new ApiError(400, 'No settings change was provided', 'INVALID_SETTINGS');
   }
 
@@ -870,11 +883,17 @@ async function updateSettings(request, env, ctx) {
 
   const nextPortalName = hasPortalName ? validatePortalName(input.portalName) : null;
   const nextInitialArticles = hasInitialArticles ? validateInitialArticles(input.initialArticles) : null;
+  const nextHeroEyebrow = hasHeroEyebrow ? validateHeroEyebrow(input.heroEyebrow) : null;
+  const nextHeroTitle = hasHeroTitle ? validateHeroTitle(input.heroTitle) : null;
+  const nextHeroDescription = hasHeroDescription ? validateHeroDescription(input.heroDescription) : null;
+
   let previousMode = null;
   let previousPortalName = null;
   let previousInitialArticles = null;
   let portalNameChanged = false;
   let initialArticlesChanged = false;
+  let homepageChanged = false;
+  let previousHomepageFields = [];
 
   const updated = await mutateStore(env, 'settings', (settings) => {
     if (hasMode) {
@@ -894,6 +913,23 @@ async function updateSettings(request, env, ctx) {
       initialArticlesChanged = previousInitialArticles !== nextInitialArticles;
       settings.initialArticles = nextInitialArticles;
     }
+
+    if (hasHeroEyebrow) {
+      const previous = heroEyebrow(settings);
+      if (previous !== nextHeroEyebrow) previousHomepageFields.push({ field: 'Hero label', value: previous });
+      settings.heroEyebrow = nextHeroEyebrow;
+    }
+    if (hasHeroTitle) {
+      const previous = heroTitle(settings);
+      if (previous !== nextHeroTitle) previousHomepageFields.push({ field: 'Hero title', value: previous });
+      settings.heroTitle = nextHeroTitle;
+    }
+    if (hasHeroDescription) {
+      const previous = heroDescription(settings);
+      if (previous !== nextHeroDescription) previousHomepageFields.push({ field: 'Hero description', value: previous });
+      settings.heroDescription = nextHeroDescription;
+    }
+    homepageChanged = previousHomepageFields.length > 0;
 
     settings.updatedAt = new Date().toISOString();
     settings.updatedById = user.id;
@@ -934,11 +970,26 @@ async function updateSettings(request, env, ctx) {
     });
   }
 
+  if (homepageChanged) {
+    scheduleLogEntry(ctx, env, {
+      action: 'Homepage Content Update',
+      entityId: null,
+      entityLabel: 'Portal',
+      previousEntityId: null,
+      previousEntityLabel: null,
+      previousFields: previousHomepageFields,
+      userEmail: user.email,
+    });
+  }
+
   return json({
     ok: true,
     mode: updated.mode,
     portalName: portalName(updated),
     initialArticles: initialArticlesCount(updated),
+    heroEyebrow: heroEyebrow(updated),
+    heroTitle: heroTitle(updated),
+    heroDescription: heroDescription(updated),
   });
 }
 
@@ -961,6 +1012,9 @@ function createStore(name) {
     mode: 'private',
     portalName: DEFAULT_PORTAL_NAME,
     initialArticles: DEFAULT_INITIAL_ARTICLES,
+    heroEyebrow: DEFAULT_HERO_EYEBROW,
+    heroTitle: DEFAULT_HERO_TITLE,
+    heroDescription: DEFAULT_HERO_DESCRIPTION,
     updatedAt: now,
     updatedById: null,
   };
@@ -1013,6 +1067,9 @@ function storeFromLegacy(name, legacy) {
       mode: ['private', 'public'].includes(legacy.settings?.mode) ? legacy.settings.mode : 'private',
       portalName: validPortalNameOrDefault(legacy.settings?.portalName),
       initialArticles: validInitialArticlesOrDefault(legacy.settings?.initialArticles),
+      heroEyebrow: validHeroTextOrDefault(legacy.settings?.heroEyebrow, DEFAULT_HERO_EYEBROW, 80),
+      heroTitle: validHeroTextOrDefault(legacy.settings?.heroTitle, DEFAULT_HERO_TITLE, 200),
+      heroDescription: validHeroTextOrDefault(legacy.settings?.heroDescription, DEFAULT_HERO_DESCRIPTION, 500),
       updatedAt: legacy.settings?.updatedAt || legacy.updatedAt || now,
       updatedById: legacy.settings?.updatedById ?? null,
     };
@@ -1210,6 +1267,15 @@ function validateStore(name, data) {
       throw new ApiError(500, 'Portal settings data is invalid', 'INVALID_DATABASE');
     }
     if (data.initialArticles !== undefined && (!Number.isInteger(data.initialArticles) || data.initialArticles < 1 || data.initialArticles > 1000)) {
+      throw new ApiError(500, 'Portal settings data is invalid', 'INVALID_DATABASE');
+    }
+    if (data.heroEyebrow !== undefined && (typeof data.heroEyebrow !== 'string' || data.heroEyebrow.length > 80)) {
+      throw new ApiError(500, 'Portal settings data is invalid', 'INVALID_DATABASE');
+    }
+    if (data.heroTitle !== undefined && (typeof data.heroTitle !== 'string' || !data.heroTitle.trim() || data.heroTitle.trim().length > 200)) {
+      throw new ApiError(500, 'Portal settings data is invalid', 'INVALID_DATABASE');
+    }
+    if (data.heroDescription !== undefined && (typeof data.heroDescription !== 'string' || !data.heroDescription.trim() || data.heroDescription.trim().length > 500)) {
       throw new ApiError(500, 'Portal settings data is invalid', 'INVALID_DATABASE');
     }
     if (data.updatedById !== null && data.updatedById !== undefined && !isUuid(data.updatedById)) {
@@ -1491,6 +1557,42 @@ function validInitialArticlesOrDefault(value) {
 
 function initialArticlesCount(settings) {
   return validInitialArticlesOrDefault(settings?.initialArticles);
+}
+
+function validHeroTextOrDefault(value, fallback, maxLength) {
+  if (typeof value !== 'string') return fallback;
+  const text = value.trim();
+  return text.length <= maxLength && (text || fallback === DEFAULT_HERO_EYEBROW) ? text : fallback;
+}
+
+function validateHeroEyebrow(value) {
+  const text = String(value ?? '').trim();
+  if (text.length > 80) throw new ApiError(400, 'Hero label must be at most 80 characters', 'INVALID_HERO_EYEBROW');
+  return text;
+}
+
+function validateHeroTitle(value) {
+  const text = String(value ?? '').trim();
+  if (!text || text.length > 200) throw new ApiError(400, 'Hero title is required and must be at most 200 characters', 'INVALID_HERO_TITLE');
+  return text;
+}
+
+function validateHeroDescription(value) {
+  const text = String(value ?? '').trim();
+  if (!text || text.length > 500) throw new ApiError(400, 'Hero description is required and must be at most 500 characters', 'INVALID_HERO_DESCRIPTION');
+  return text;
+}
+
+function heroEyebrow(settings) {
+  return validHeroTextOrDefault(settings?.heroEyebrow, DEFAULT_HERO_EYEBROW, 80);
+}
+
+function heroTitle(settings) {
+  return validHeroTextOrDefault(settings?.heroTitle, DEFAULT_HERO_TITLE, 200);
+}
+
+function heroDescription(settings) {
+  return validHeroTextOrDefault(settings?.heroDescription, DEFAULT_HERO_DESCRIPTION, 500);
 }
 
 function validateCommentContent(value) {
