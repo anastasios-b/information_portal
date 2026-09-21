@@ -6,7 +6,7 @@ const app = await readFile(new URL('../src/App.jsx', import.meta.url), 'utf8');
 const clientApi = await readFile(new URL('../src/api.js', import.meta.url), 'utf8');
 
 test('UI preserves required routes, search and controls', () => {
-  for (const route of ['/admin/articles', '/admin/categories', '/admin/users', '/admin/settings']) {
+  for (const route of ['/admin/articles', '/admin/categories', '/admin/logbook', '/admin/users', '/admin/settings']) {
     assert.match(app, new RegExp(route.replace(/\//g, '\\\/')));
   }
 
@@ -34,6 +34,7 @@ test('UI preserves required routes, search and controls', () => {
   assert.match(app, /disabled=\{selected\}/);
   assert.match(app, /target="_blank"/);
   assert.match(app, /rel="noopener noreferrer"/);
+  assert.match(app, /isAdmin && <NavButton path="\/admin\/logbook"/);
 
   assert.match(app, /function AppSkeleton/);
   assert.match(app, /function PortalSkeleton/);
