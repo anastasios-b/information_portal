@@ -494,10 +494,16 @@ function ArticlePage({ path, boot, refresh, content, patchContent, searchQuery, 
   </>;
 }
 
-function PortalHeader({ boot, logout }) {
+function PortalHeader({ boot, logout, content, searchQuery, setSearchQuery }) {
   return <header className="top">
     <button className="brand-link" onClick={() => navigate('/')}>{boot.portalName || 'Information Portal'}</button>
-    <div>
+    <PortalSearch
+      articles={content?.articles || []}
+      categories={content?.categories || []}
+      query={searchQuery}
+      setQuery={setSearchQuery}
+    />
+    <div className="top-actions">
       <span className="pill">{boot.mode}</span>
       {boot.user ? <>
         <span className="who">{boot.user.fullName || boot.user.email}</span>
@@ -508,9 +514,61 @@ function PortalHeader({ boot, logout }) {
   </header>;
 }
 
-function PortalSidebar({ announcements, articles, currentArticleId }) {
+function PortalSearch({ articles, categories, query, setQuery }) {
+  const [open, setOpen] = useState(false);
+  const results = useMemo(
+    () => filterPortalArticles(articles, categories, query),
+    [articles, categories, query],
+  );
+  const hasQuery = Boolean(query.trim());
+  const visibleResults = hasQuery ? results.slice(0, 5) : [];
+
+  const openArticle = (articleId) => {
+    setOpen(false);
+    navigate(`/articles/${articleId}`);
+  };
+
+  const viewAll = () => {
+    setOpen(false);
+    navigate('/');
+  };
+
+  return <div className="portal-search" onBlur={() => setTimeout(() => setOpen(false), 0)}>
+    <input
+      type="search"
+      aria-label="Search articles"
+      placeholder="Search articles…"
+      value={query}
+      onFocus={() => setOpen(true)}
+      onChange={(event) => {
+        setQuery(event.target.value);
+        setOpen(true);
+      }}
+    />
+    {open && hasQuery && <div className="portal-search-results" role="listbox" aria-label="Article search results">
+      {visibleResults.map((article) => <button
+        type="button"
+        className="portal-search-result"
+        key={article.id}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => openArticle(article.id)}
+      >
+        <b>{article.title}</b>
+        <small>{article.summary || articlePlainText(article.content).slice(0, 90)}</small>
+      </button>)}
+      {!results.length && <div className="portal-search-empty">No matching articles.</div>}
+      {results.length > 5 && <button
+        type="button"
+        className="portal-search-all"
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={viewAll}
+      >View all results</button>}
+    </div>}
+  </div>;
+}
+
+function PortalSidebar({ announcements }) {
   const [showAll, setShowAll] = useState(false);
-  const recentArticles = (articles || []).filter((article) => article.id !== currentArticleId).slice(0, 5);
   const visibleAnnouncements = (announcements || []).slice(0, 3);
 
   return <aside className="portal-sidebar">
@@ -523,14 +581,6 @@ function PortalSidebar({ announcements, articles, currentArticleId }) {
       </article>)}
       {!visibleAnnouncements.length && <p className="hint">No active announcements.</p>}
       {(announcements || []).length > 3 && <button className="secondary sidebar-show-all" onClick={() => setShowAll(true)}>Show all</button>}
-    </section>
-
-    <section className="sidebar-section recent-section">
-      <div className="sidebar-title"><h2>Recent Articles</h2></div>
-      {recentArticles.map((article) => <button className="recent-article" key={article.id} onClick={() => navigate(`/articles/${article.id}`)}>
-        <span>{article.title}</span><small>{new Date(article.updatedAt).toLocaleString()}</small>
-      </button>)}
-      {!recentArticles.length && <p className="hint">No recent articles.</p>}
     </section>
 
     {showAll && <div className="drawer-backdrop" onMouseDown={() => setShowAll(false)}>
