@@ -70,6 +70,13 @@ test('UI preserves required routes, content controls and single-load behavior', 
   assert.match(app, /comment\.userFullName/);
   assert.match(app, /comment\.userEmail/);
   assert.match(app, /boot\.mode === 'private'/);
+  assert.match(app, /Allow comment writing/);
+  assert.match(app, /canComment/);
+  assert.match(app, /comment\.userId === boot\.user\?\.id/);
+  assert.match(app, /saveCommentEdit/);
+  assert.match(app, /removeComment/);
+  assert.match(app, /Portal Name/);
+  assert.match(app, /boot\.portalName/);
 
   assert.match(app, /function AppSkeleton/);
   assert.match(app, /function PortalSkeleton/);
