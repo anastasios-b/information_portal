@@ -403,6 +403,21 @@ async function deleteAnnouncement(request, env, id) {
   return json({ ok: true });
 }
 
+async function requireArticleCommentAccess(env, articleId, user) {
+  const [{ data: articleStore }, { data: categoryStore }] = await Promise.all([
+    readStore(env, 'articles'),
+    readStore(env, 'categories'),
+  ]);
+  const article = articleStore.articles.find((item) => item.id === articleId);
+  if (!article) throw new ApiError(404, 'Article not found', 'ARTICLE_NOT_FOUND');
+
+  const manager = ['administrator', 'editor'].includes(user.role);
+  if (!manager && (article.status !== 'published' || !articleHasVisibleCategory(article, categoryStore.categories))) {
+    throw new ApiError(403, 'Article is not available to this account', 'FORBIDDEN');
+  }
+  return article;
+}
+
 async function addArticleComment(request, env, articleId) {
   assertUuid(articleId);
   const { data: settings } = await readStore(env, 'settings');
@@ -412,12 +427,7 @@ async function addArticleComment(request, env, articleId) {
 
   const { user } = await authenticate(request, env, ['administrator', 'editor', 'reader']);
   requireCommentWrite(user);
-  const { data: articleStore } = await readStore(env, 'articles');
-  const article = articleStore.articles.find((item) => item.id === articleId);
-  if (!article) throw new ApiError(404, 'Article not found', 'ARTICLE_NOT_FOUND');
-  if (article.status === 'draft' && !['administrator', 'editor'].includes(user.role)) {
-    throw new ApiError(403, 'Insufficient permissions', 'FORBIDDEN');
-  }
+  await requireArticleCommentAccess(env, articleId, user);
 
   const input = await jsonBody(request);
   const content = validateCommentContent(input.content);
@@ -450,6 +460,7 @@ async function updateArticleComment(request, env, articleId, commentId) {
 
   const { user } = await authenticate(request, env, ['administrator', 'editor', 'reader']);
   requireCommentWrite(user);
+  await requireArticleCommentAccess(env, articleId, user);
   const input = await jsonBody(request);
   const content = validateCommentContent(input.content);
 
@@ -477,6 +488,7 @@ async function deleteArticleComment(request, env, articleId, commentId) {
 
   const { user } = await authenticate(request, env, ['administrator', 'editor', 'reader']);
   requireCommentWrite(user);
+  await requireArticleCommentAccess(env, articleId, user);
   await mutateStore(env, 'comments', (store) => {
     const index = store.comments.findIndex((item) => item.id === commentId && item.articleId === articleId);
     if (index < 0) throw new ApiError(404, 'Comment not found', 'COMMENT_NOT_FOUND');
@@ -518,13 +530,21 @@ async function getArticle(request, env, id) {
   const article = articleStore.articles.find((item) => item.id === id);
   if (!article) throw new ApiError(404, 'Article not found', 'ARTICLE_NOT_FOUND');
 
+  let managementAccess = false;
   if (article.status === 'draft' || !articleHasVisibleCategory(article, categoryStore.categories)) {
     await authenticate(request, env, ['administrator', 'editor']);
+    managementAccess = true;
   } else {
     const { data: settings } = await readStore(env, 'settings');
-    if (settings.mode === 'private') await authenticate(request, env, ['administrator', 'editor', 'reader']);
+    if (settings.mode === 'private') {
+      const { user } = await authenticate(request, env, ['administrator', 'editor', 'reader']);
+      managementAccess = ['administrator', 'editor'].includes(user.role);
+    }
   }
-  return json({ article: publicArticle(article) });
+
+  return json({
+    article: managementAccess ? publicArticle(article) : portalArticle(article, categoryStore.categories),
+  });
 }
 
 async function saveArticle(request, env, ctx, id = null) {
