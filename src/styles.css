@@ -123,7 +123,7 @@
 
 .portal-layout{display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:1.5rem;align-items:start}
 .portal-primary{min-width:0}
-.portal-sidebar{position:sticky;top:88px;display:grid;gap:1rem;min-width:0}
+.portal-sidebar{position:sticky;top:88px;display:grid;gap:1rem;min-width:0}.portal-sidebar:has(.drawer-backdrop){z-index:60}
 .sidebar-section{border:1px solid #dedfd8;border-radius:16px;background:#fff;padding:1rem;box-shadow:0 10px 35px rgba(25,28,24,.04)}
 .sidebar-title{display:flex;align-items:center;justify-content:space-between;gap:.75rem;margin-bottom:.8rem}
 .sidebar-title h2{font-size:1.05rem;margin:0}
@@ -140,8 +140,8 @@
 .recent-article:last-of-type{border-bottom:0}
 .recent-article span{font-weight:750;line-height:1.35}
 .recent-article small{font-weight:400}
-.drawer-backdrop{position:fixed;inset:0;z-index:50;background:rgba(20,22,19,.5)}
-.announcement-drawer{position:absolute;right:0;top:0;height:100%;width:min(460px,92vw);overflow:auto;background:#fff;border-left:1px solid #dedfd8;padding:1.25rem;box-shadow:-18px 0 55px rgba(20,22,19,.14)}
+.drawer-backdrop{position:fixed;inset:0;z-index:60;background:rgba(20,22,19,.5)}
+.announcement-drawer{position:absolute;right:0;top:0;z-index:61;height:100%;width:min(460px,92vw);overflow:auto;background:#fff;border-left:1px solid #dedfd8;padding:1.25rem;box-shadow:-18px 0 55px rgba(20,22,19,.14)}
 .announcement-drawer>header{position:sticky;top:-1.25rem;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:1rem;margin:-1.25rem -1.25rem 1rem;padding:1.25rem;background:#fff;border-bottom:1px solid #ecece7}
 .announcement-drawer>header h2{margin:0}
 .announcement-drawer-list{display:grid}
