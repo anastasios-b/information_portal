@@ -972,6 +972,7 @@ function Logbook() {
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [actionFilter, setActionFilter] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -991,19 +992,33 @@ function Logbook() {
     return () => { active = false; };
   }, []);
 
+  const actionOptions = useMemo(
+    () => [...new Set(entries.map((entry) => entry.action))].sort((a, b) => a.localeCompare(b)),
+    [entries],
+  );
+  const filteredEntries = actionFilter
+    ? entries.filter((entry) => entry.action === actionFilter)
+    : entries;
+
   return <section>
     <Head title="Logbook" text="Audit history for portal content, users, categories and visibility changes." />
     {error && <ErrorBox text={error} />}
     <div className="card logbook-card">
       <div className="logbook-table" role="table" aria-label="Portal logbook" aria-busy={loading}>
         <div className="logbook-row logbook-head" role="row">
-          <div role="columnheader">Action</div>
+          <div role="columnheader" className="logbook-action-header">
+            <span>Action</span>
+            <select aria-label="Filter logbook by action" value={actionFilter} onChange={(event) => setActionFilter(event.target.value)}>
+              <option value="">All actions</option>
+              {actionOptions.map((action) => <option key={action} value={action}>{action}</option>)}
+            </select>
+          </div>
           <div role="columnheader">Affected entity</div>
           <div role="columnheader">Previous Value</div>
           <div role="columnheader">User</div>
           <div role="columnheader">Action taken at</div>
         </div>
-        {loading ? <LogbookSkeleton /> : entries.map((entry) => <div className="logbook-row" role="row" key={entry.id}>
+        {loading ? <LogbookSkeleton /> : filteredEntries.map((entry) => <div className="logbook-row" role="row" key={entry.id}>
           <div role="cell"><b>{entry.action}</b></div>
           <div role="cell" className="logbook-entity">
             {entry.entityId ? <><span>{entry.entityLabel}</span><code>{entry.entityId}</code></> : <span>{entry.entityLabel}</span>}
@@ -1029,6 +1044,7 @@ function Logbook() {
         </div>)}
       </div>
       {!loading && !entries.length && !error && <div className="empty">No logbook entries yet.</div>}
+      {!loading && Boolean(entries.length) && !filteredEntries.length && !error && <div className="empty">No logbook entries match this action.</div>}
     </div>
   </section>;
 }
