@@ -319,8 +319,12 @@ async function getContent(request, env, manage) {
   const announcementStore = stores[2].data;
   const commentStore = stores[3]?.data;
 
+  const visibleCategories = categoryStore.categories.filter((category) => !category.hidden);
   const articles = sortArticles(
-    manage ? articleStore.articles : articleStore.articles.filter((article) => article.status === 'published'),
+    manage
+      ? articleStore.articles
+      : articleStore.articles.filter((article) =>
+          article.status === 'published' && articleHasVisibleCategory(article, categoryStore.categories)),
   ).map(publicArticle);
 
   const now = Date.now();
@@ -340,7 +344,7 @@ async function getContent(request, env, manage) {
     portalName: portalName(settings),
     user: user ? publicUser(user) : null,
     articles,
-    categories: sortCategories(categoryStore.categories),
+    categories: sortCategories(manage ? categoryStore.categories : visibleCategories),
     announcements,
     comments,
   });
@@ -494,17 +498,27 @@ async function listArticles(request, env, manage) {
 
   const { data: settings } = await readStore(env, 'settings');
   if (settings.mode === 'private') await authenticate(request, env, ['administrator', 'editor', 'reader']);
-  const { data: articleStore } = await readStore(env, 'articles');
-  return json({ articles: sortArticles(articleStore.articles.filter((article) => article.status === 'published')).map(publicArticle) });
+  const [{ data: articleStore }, { data: categoryStore }] = await Promise.all([
+    readStore(env, 'articles'),
+    readStore(env, 'categories'),
+  ]);
+  return json({
+    articles: sortArticles(articleStore.articles.filter((article) =>
+      article.status === 'published' && articleHasVisibleCategory(article, categoryStore.categories),
+    )).map(publicArticle),
+  });
 }
 
 async function getArticle(request, env, id) {
   assertUuid(id);
-  const { data: articleStore } = await readStore(env, 'articles');
+  const [{ data: articleStore }, { data: categoryStore }] = await Promise.all([
+    readStore(env, 'articles'),
+    readStore(env, 'categories'),
+  ]);
   const article = articleStore.articles.find((item) => item.id === id);
   if (!article) throw new ApiError(404, 'Article not found', 'ARTICLE_NOT_FOUND');
 
-  if (article.status === 'draft') {
+  if (article.status === 'draft' || !articleHasVisibleCategory(article, categoryStore.categories)) {
     await authenticate(request, env, ['administrator', 'editor']);
   } else {
     const { data: settings } = await readStore(env, 'settings');
@@ -603,7 +617,7 @@ async function listCategories(request, env, manage) {
   const { data: settings } = await readStore(env, 'settings');
   if (settings.mode === 'private') await authenticate(request, env, ['administrator', 'editor', 'reader']);
   const { data: categoryStore } = await readStore(env, 'categories');
-  return json({ categories: sortCategories(categoryStore.categories) });
+  return json({ categories: sortCategories(categoryStore.categories.filter((category) => !category.hidden)) });
 }
 
 async function saveCategory(request, env, ctx, id = null) {
@@ -620,8 +634,16 @@ async function saveCategory(request, env, ctx, id = null) {
     if (id) {
       const existing = store.categories.find((item) => item.id === id);
       if (!existing) throw new ApiError(404, 'Category not found', 'CATEGORY_NOT_FOUND');
-      previousCategory = { id: existing.id, label: existing.name };
+      previousCategory = {
+        id: existing.id,
+        label: existing.name,
+        fields: [
+          existing.name !== input.name ? { field: 'Name', value: existing.name } : null,
+          Boolean(existing.hidden) !== input.hidden ? { field: 'Hidden', value: Boolean(existing.hidden) ? 'Yes' : 'No' } : null,
+        ].filter(Boolean),
+      };
       existing.name = input.name;
+      existing.hidden = input.hidden;
       existing.updatedAt = now;
       existing.updatedById = user.id;
       return existing;
@@ -629,6 +651,7 @@ async function saveCategory(request, env, ctx, id = null) {
     const created = {
       id: crypto.randomUUID(),
       name: input.name,
+      hidden: input.hidden,
       createdById: user.id,
       updatedById: user.id,
       createdAt: now,
@@ -644,6 +667,7 @@ async function saveCategory(request, env, ctx, id = null) {
     entityLabel: category.name,
     previousEntityId: previousCategory?.id ?? null,
     previousEntityLabel: previousCategory?.label ?? null,
+    previousFields: previousCategory?.fields ?? null,
     userEmail: user.email,
   });
 
@@ -895,7 +919,9 @@ function storeFromLegacy(name, legacy) {
     return {
       id: crypto.randomUUID(),
       schemaVersion: 1,
-      categories: Array.isArray(legacy.categories) ? structuredClone(legacy.categories) : [],
+      categories: Array.isArray(legacy.categories)
+        ? legacy.categories.map((category) => ({ ...structuredClone(category), hidden: Boolean(category.hidden) }))
+        : [],
       createdAt,
       updatedAt: legacy.updatedAt || now,
     };
@@ -1005,7 +1031,8 @@ function validateStore(name, data) {
   } else if (name === 'categories') {
     if (!Array.isArray(data.categories)) throw new ApiError(500, 'Portal categories data is invalid', 'INVALID_DATABASE');
     for (const category of data.categories) {
-      if (!isUuid(category.id) || typeof category.name !== 'string' || !isUuid(category.createdById) || !isUuid(category.updatedById)) {
+      const hiddenValid = category.hidden === undefined || typeof category.hidden === 'boolean';
+      if (!isUuid(category.id) || typeof category.name !== 'string' || !hiddenValid || !isUuid(category.createdById) || !isUuid(category.updatedById)) {
         throw new ApiError(500, 'Portal categories data is invalid', 'INVALID_DATABASE');
       }
     }
@@ -1136,6 +1163,13 @@ function publicUser(user) {
 function articleCategoryIds(article) {
   if (Array.isArray(article.categoryIds)) return [...new Set(article.categoryIds.filter(isUuid))];
   return isUuid(article.categoryId) ? [article.categoryId] : [];
+}
+
+function articleHasVisibleCategory(article, categories) {
+  const visibleCategoryIds = new Set(
+    categories.filter((category) => !category.hidden).map((category) => category.id),
+  );
+  return articleCategoryIds(article).some((categoryId) => visibleCategoryIds.has(categoryId));
 }
 
 function publicArticle(article) {
@@ -1311,7 +1345,7 @@ function validateCategory(input) {
   if (!name || name.length > 80) {
     throw new ApiError(400, 'Category name is required and must be at most 80 characters', 'INVALID_CATEGORY_NAME');
   }
-  return { name };
+  return { name, hidden: input.hidden === true };
 }
 function validateArticle(input, categories) {
   const title = String(input.title || '').trim();
