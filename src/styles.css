@@ -108,6 +108,9 @@
 .logbook-row>div:nth-child(5){grid-column:5;grid-row:1}
 .logbook-head{background:#f7f7f3;font-size:.8rem;font-weight:800;color:#555b53}
 .logbook-head>div{border-bottom:1px solid #dedfd8}
+.logbook-action-header{gap:.45rem;align-items:stretch}
+.logbook-action-header select{width:100%;max-width:100%;min-width:0;border:1px solid #d4d6cf;border-radius:7px;padding:.38rem .5rem;background:#fff;color:#30352f;font-size:.76rem;font-weight:600;outline:none}
+.logbook-action-header select:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(231,78,36,.12)}
 .logbook-row:last-child>div{border-bottom:0}
 .logbook-entity{display:flex;flex-direction:column;justify-content:center;gap:.2rem}
 .logbook-entity code{display:block;max-width:100%;overflow-wrap:anywhere;word-break:break-word;font-size:.75rem;color:#747970}
