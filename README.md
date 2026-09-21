@@ -256,3 +256,12 @@ Article categories can be marked **Hidden** by administrators or editors.
 ## Homepage settings
 
 Administrators can edit the homepage hero label, title, and description in **Settings**. The same settings area controls **Initial Articles**.
+
+
+## Homepage and search
+
+Administrators can edit the homepage hero label, title, and description from **Settings → Homepage content**.
+
+Portal pages use a persistent centered header search. Search matches article title, summary, rendered body text, and category names. It displays up to five dropdown matches immediately; when more than five matches exist, **View all results** opens the homepage with the same search query so the complete matching set is shown.
+
+The search uses the initially loaded article index until the full article set finishes loading in the background, then automatically searches the complete set.
