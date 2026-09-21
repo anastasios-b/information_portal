@@ -9,6 +9,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 const KEYS = {
   users: 'db/users.json',
   articles: 'db/articles.json',
+  initialArticles: 'db/articles-initial.json',
   categories: 'db/article-categories.json',
   settings: 'db/settings.json',
   logbook: 'db/logbook.json',
@@ -958,4 +959,86 @@ test('hidden categories hide exclusive articles while multi-category visible art
     body: { content: 'Should not be allowed' },
   });
   assert.equal(result.response.status, 403);
+});
+
+
+test('initial article index uses configured newest-created limit before full content load', async () => {
+  const e = env();
+  const admin = await setupAdmin(e);
+  const category = await createCategory(e, admin.cookie, 'Initial index');
+  const authorId = admin.payload.user.id;
+  const base = Date.parse('2026-01-01T00:00:00.000Z');
+
+  const articles = Array.from({ length: 5 }, (_, index) => ({
+    id: crypto.randomUUID(),
+    title: `Article ${index + 1}`,
+    summary: '',
+    content: `Body ${index + 1}`,
+    status: 'published',
+    categoryIds: [category.id],
+    authorId,
+    updatedById: authorId,
+    createdAt: new Date(base + index * 1000).toISOString(),
+    updatedAt: new Date(base + index * 1000).toISOString(),
+  }));
+
+  e.PORTAL_DATA.seed(KEYS.articles, {
+    id: crypto.randomUUID(),
+    schemaVersion: 1,
+    articles,
+    createdAt: new Date(base).toISOString(),
+    updatedAt: new Date(base + 5000).toISOString(),
+  });
+
+  let result = await call(e, '/api/admin/settings', {
+    method: 'PATCH',
+    cookie: admin.cookie,
+    body: { initialArticles: 2 },
+  });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.payload.initialArticles, 2);
+
+  const initialStore = e.PORTAL_DATA.data(KEYS.initialArticles);
+  assert.ok(initialStore);
+  assert.deepEqual(initialStore.articles.map((article) => article.title), ['Article 5', 'Article 4']);
+
+  result = await call(e, '/api/content?initial=1', { cookie: admin.cookie });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.payload.articlesComplete, false);
+  assert.deepEqual(result.payload.articles.map((article) => article.title), ['Article 5', 'Article 4']);
+
+  result = await call(e, '/api/content', { cookie: admin.cookie });
+  assert.equal(result.response.status, 200);
+  assert.equal(result.payload.articlesComplete, true);
+  assert.deepEqual(
+    result.payload.articles.map((article) => article.title),
+    ['Article 5', 'Article 4', 'Article 3', 'Article 2', 'Article 1'],
+  );
+});
+
+test('bootstrap exposes default initial article count and editable homepage content', async () => {
+  const e = env();
+  const admin = await setupAdmin(e);
+
+  let result = await call(e, '/api/bootstrap', { cookie: admin.cookie });
+  assert.equal(result.payload.initialArticles, 12);
+  assert.equal(result.payload.heroEyebrow, 'Team knowledge');
+  assert.equal(result.payload.heroTitle, 'Information that stays easy to find.');
+  assert.equal(result.payload.heroDescription, 'Published procedures, references, notes and updates in one lean portal.');
+
+  result = await call(e, '/api/admin/settings', {
+    method: 'PATCH',
+    cookie: admin.cookie,
+    body: {
+      heroEyebrow: 'Internal knowledge',
+      heroTitle: 'Find the answer quickly.',
+      heroDescription: 'Procedures and references for the team.',
+    },
+  });
+  assert.equal(result.response.status, 200);
+
+  result = await call(e, '/api/bootstrap', { cookie: admin.cookie });
+  assert.equal(result.payload.heroEyebrow, 'Internal knowledge');
+  assert.equal(result.payload.heroTitle, 'Find the answer quickly.');
+  assert.equal(result.payload.heroDescription, 'Procedures and references for the team.');
 });
