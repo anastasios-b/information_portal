@@ -112,7 +112,7 @@ test('UI preserves required routes, content controls and single-load behavior', 
   assert.match(app, /article-code-summary/);
   assert.match(app, /article-code-chevron/);
   assert.match(app, /CODE_LANGUAGES/);
-  for (const language of ['javascript', 'bash', 'php', 'sql', 'python']) assert.match(app, new RegExp(language));
+  for (const language of ['javascript', 'bash', 'docker', 'dockerfile', 'kubernetes', 'k8s', 'yaml', 'php', 'sql', 'python']) assert.match(app, new RegExp(language));
   assert.match(app, /Prism\.tokenize/);
   assert.match(app, /renderSyntaxTokens/);
   assert.match(app, /syntax-highlighted/);
