@@ -58,6 +58,11 @@ test('UI preserves required routes, content controls and single-load behavior', 
   assert.match(app, /function Announcements/);
   assert.match(app, /Start date/);
   assert.match(app, /End date \(optional\)/);
+  assert.match(app, /announcement-status/);
+  assert.match(app, /Stopped/);
+  assert.match(app, /Active/);
+  assert.match(styles, /\.announcement-status\.active\{/);
+  assert.match(styles, /\.announcement-status\.stopped\{/);
 
   assert.match(app, /function ArticlePage/);
   assert.match(app, /Comments/);
