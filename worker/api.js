@@ -316,7 +316,21 @@ async function saveArticle(request, env, ctx, id = null) {
     if (id) {
       const existing = store.articles.find((item) => item.id === id);
       if (!existing) throw new ApiError(404, 'Article not found', 'ARTICLE_NOT_FOUND');
-      previousArticle = { id: existing.id, label: existing.title };
+      previousArticle = {
+        id: existing.id,
+        label: existing.title,
+        fields: [
+          existing.title !== input.title ? { field: 'Title', value: existing.title } : null,
+          existing.summary !== input.summary ? { field: 'Summary', value: existing.summary } : null,
+          existing.content !== input.content ? { field: 'Content', value: existing.content } : null,
+          existing.status !== input.status ? { field: 'Status', value: existing.status } : null,
+          existing.categoryId !== input.categoryId ? {
+            field: 'Category',
+            value: categoryStore.categories.find((category) => category.id === existing.categoryId)?.name || 'Unknown category',
+            referenceId: existing.categoryId,
+          } : null,
+        ].filter(Boolean),
+      };
       Object.assign(existing, input, { updatedAt: now, updatedById: user.id });
       return existing;
     }
@@ -338,6 +352,7 @@ async function saveArticle(request, env, ctx, id = null) {
     entityLabel: article.title,
     previousEntityId: previousArticle?.id ?? null,
     previousEntityLabel: previousArticle?.label ?? null,
+    previousFields: previousArticle?.fields ?? null,
     userEmail: user.email,
   });
 
@@ -739,8 +754,13 @@ function validateStore(name, data) {
     for (const entry of data.entries) {
       const previousIdValid = entry.previousEntityId === undefined || entry.previousEntityId === null || isUuid(entry.previousEntityId);
       const previousLabelValid = entry.previousEntityLabel === undefined || entry.previousEntityLabel === null || typeof entry.previousEntityLabel === 'string';
+      const previousFieldsValid = entry.previousFields === undefined || entry.previousFields === null ||
+        (Array.isArray(entry.previousFields) && entry.previousFields.every((field) =>
+          field && typeof field.field === 'string' && typeof field.value === 'string' &&
+          (field.referenceId === undefined || field.referenceId === null || isUuid(field.referenceId))
+        ));
       if (!isUuid(entry.id) || typeof entry.action !== 'string' || typeof entry.entityLabel !== 'string' ||
-          (entry.entityId !== null && !isUuid(entry.entityId)) || !previousIdValid || !previousLabelValid ||
+          (entry.entityId !== null && !isUuid(entry.entityId)) || !previousIdValid || !previousLabelValid || !previousFieldsValid ||
           typeof entry.userEmail !== 'string' || typeof entry.createdAt !== 'string') {
         throw new ApiError(500, 'Portal logbook data is invalid', 'INVALID_DATABASE');
       }
@@ -754,6 +774,7 @@ function scheduleLogEntry(ctx, env, {
   entityLabel,
   previousEntityId = null,
   previousEntityLabel = null,
+  previousFields = null,
   userEmail,
 }) {
   const entry = {
@@ -763,6 +784,7 @@ function scheduleLogEntry(ctx, env, {
     entityLabel,
     previousEntityId,
     previousEntityLabel,
+    previousFields,
     userEmail,
     createdAt: new Date().toISOString(),
   };
