@@ -366,3 +366,37 @@ test('new password hashes use the Worker-safe PBKDF2 cost and remain verifiable'
   });
   assert.equal(result.response.status, 200);
 });
+
+
+test('logbook is visible only to administrators', async () => {
+  const e = env();
+  const admin = await setupAdmin(e);
+
+  let result = await call(e, '/api/admin/users', {
+    method: 'POST',
+    cookie: admin.cookie,
+    body: {
+      email: 'editor@example.com',
+      password: 'editor-secure-password',
+      role: 'editor',
+    },
+  });
+  assert.equal(result.response.status, 201);
+
+  result = await call(e, '/api/login', {
+    method: 'POST',
+    body: {
+      email: 'editor@example.com',
+      password: 'editor-secure-password',
+    },
+  });
+  assert.equal(result.response.status, 200);
+  const editorCookie = cookieFrom(result.response);
+
+  result = await call(e, '/api/admin/logbook', { cookie: admin.cookie });
+  assert.equal(result.response.status, 200);
+  assert.ok(Array.isArray(result.payload.entries));
+
+  result = await call(e, '/api/admin/logbook', { cookie: editorCookie });
+  assert.equal(result.response.status, 403);
+});
