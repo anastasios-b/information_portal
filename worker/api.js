@@ -156,6 +156,7 @@ async function setup(request, env) {
       fullName,
       email,
       role: 'administrator',
+      canComment: true,
       password: await hashPassword(password),
       sessionNonce: crypto.randomUUID(),
       createdAt: now,
@@ -406,6 +407,7 @@ async function addArticleComment(request, env, articleId) {
   }
 
   const { user } = await authenticate(request, env, ['administrator', 'editor', 'reader']);
+  requireCommentWrite(user);
   const { data: articleStore } = await readStore(env, 'articles');
   const article = articleStore.articles.find((item) => item.id === articleId);
   if (!article) throw new ApiError(404, 'Article not found', 'ARTICLE_NOT_FOUND');
@@ -443,6 +445,7 @@ async function updateArticleComment(request, env, articleId, commentId) {
   }
 
   const { user } = await authenticate(request, env, ['administrator', 'editor', 'reader']);
+  requireCommentWrite(user);
   const input = await jsonBody(request);
   const content = validateCommentContent(input.content);
 
@@ -469,6 +472,7 @@ async function deleteArticleComment(request, env, articleId, commentId) {
   }
 
   const { user } = await authenticate(request, env, ['administrator', 'editor', 'reader']);
+  requireCommentWrite(user);
   await mutateStore(env, 'comments', (store) => {
     const index = store.comments.findIndex((item) => item.id === commentId && item.articleId === articleId);
     if (index < 0) throw new ApiError(404, 'Comment not found', 'COMMENT_NOT_FOUND');
@@ -691,6 +695,7 @@ async function saveUser(request, env, ctx, id = null) {
   const email = normalizeEmail(input.email);
   const requestedFullName = input.fullName == null ? null : validateFullName(input.fullName);
   const role = validateRole(input.role);
+  const canComment = role === 'reader' ? input.canComment === true : true;
   const password = input.password ? validatePassword(input.password) : null;
   if (!id && !password) throw new ApiError(400, 'Password is required', 'PASSWORD_REQUIRED');
 
@@ -713,6 +718,7 @@ async function saveUser(request, env, ctx, id = null) {
       existing.fullName = requestedFullName ?? (String(existing.fullName || '').trim() || existing.email);
       existing.email = email;
       existing.role = role;
+      existing.canComment = canComment;
       existing.updatedAt = now;
       if (password) {
         existing.password = await hashPassword(password);
@@ -726,6 +732,7 @@ async function saveUser(request, env, ctx, id = null) {
       fullName: requestedFullName ?? email,
       email,
       role,
+      canComment,
       password: await hashPassword(password),
       sessionNonce: crypto.randomUUID(),
       createdAt: now,
@@ -979,7 +986,8 @@ function validateStore(name, data) {
     if (!Array.isArray(data.users)) throw new ApiError(500, 'Portal users data is invalid', 'INVALID_DATABASE');
     for (const user of data.users) {
       const fullNameValid = user.fullName === undefined || typeof user.fullName === 'string';
-      if (!isUuid(user.id) || !isUuid(user.sessionNonce) || !ROLES.has(user.role) || typeof user.email !== 'string' || !fullNameValid) {
+      const commentPrivilegeValid = user.canComment === undefined || typeof user.canComment === 'boolean';
+      if (!isUuid(user.id) || !isUuid(user.sessionNonce) || !ROLES.has(user.role) || typeof user.email !== 'string' || !fullNameValid || !commentPrivilegeValid) {
         throw new ApiError(500, 'Portal users data is invalid', 'INVALID_DATABASE');
       }
     }
@@ -1102,12 +1110,24 @@ function requireRole(user, allowedRoles) {
   if (!allowedRoles.includes(user.role)) throw new ApiError(403, 'Insufficient permissions', 'FORBIDDEN');
   return user;
 }
+function canWriteComments(user) {
+  return Boolean(user && (user.role === 'administrator' || user.role === 'editor' || (user.role === 'reader' && user.canComment === true)));
+}
+
+function requireCommentWrite(user) {
+  if (!canWriteComments(user)) {
+    throw new ApiError(403, 'Comment writing is not enabled for this account', 'COMMENT_WRITE_DISABLED');
+  }
+  return user;
+}
+
 function publicUser(user) {
   return {
     id: user.id,
     fullName: String(user.fullName || '').trim() || user.email,
     email: user.email,
     role: user.role,
+    canComment: canWriteComments(user),
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   };
