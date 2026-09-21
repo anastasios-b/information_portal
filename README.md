@@ -242,3 +242,14 @@ The Announcements admin list displays a status indicator immediately after the t
 - **Active** in green otherwise.
 
 The status badge is an administrative indicator; portal visibility still follows the announcement start/end scheduling rules.
+
+
+## Category visibility
+
+Article categories can be marked **Hidden** by administrators or editors.
+
+- Hidden categories are omitted from portal-facing category lists.
+- A published article assigned only to hidden categories is omitted from portal-facing article lists and content.
+- If an article belongs to both hidden and visible categories, it remains visible and only its visible category associations are exposed in portal-facing responses.
+- Management views continue to show hidden categories and their articles.
+- Existing categories without a stored `hidden` value are treated as visible.
